@@ -11,6 +11,7 @@ import {
   geometria,
   mostrarHud,
   esconderHud,
+  esperarLeitor,
 } from './helpers';
 import type { Page } from '@playwright/test';
 
@@ -29,7 +30,7 @@ async function irParaCapitulo(page: Page, titulo: string | RegExp): Promise<void
   await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
   await page.locator('.reader-toc-item', { hasText: titulo }).first().click();
   await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
-  await page.evaluate(() => new Promise<void>((r) => setTimeout(() => requestAnimationFrame(() => r()), 250)));
+  await esperarLeitor(page);
 }
 
 async function proximaPagina(page: Page): Promise<void> {
@@ -129,5 +130,5 @@ async function irParaCapituloIndice(page: Page, indice: number): Promise<void> {
   await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
   await page.locator('.reader-toc-item').nth(indice).click();
   await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
-  await page.evaluate(() => new Promise<void>((r) => setTimeout(() => requestAnimationFrame(() => r()), 250)));
+  await esperarLeitor(page);
 }

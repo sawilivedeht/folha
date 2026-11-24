@@ -23,16 +23,19 @@ test.describe('Biblioteca', () => {
   test('ordenação por título, autor e mais recentes', async ({ page }) => {
     await abrirEstante(page);
     await importarMinis(page, 4);
-    await importarEFechar(page, ['epub3.epub', 'epub2.epub']);
+    // Importados em passos separados para garantir timestamps addedAt distintos.
+    await importarEFechar(page, ['epub3.epub']);
+    await importarEFechar(page, ['epub2.epub']);
     const ordenar = page.getByLabel('Ordenar livros');
 
     await ordenar.selectOption('title');
+    await expect(page.locator('.lib-grid .lib-card-title').first()).toHaveText('Livro A1');
     const porTitulo = await titulosNaGrade(page);
     const esperado = [...porTitulo].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
     expect(porTitulo).toEqual(esperado);
-    expect(porTitulo[0]).toBe('Livro A1');
 
     await ordenar.selectOption('author');
+    await expect(page.locator('.lib-grid .lib-card').last().locator('.lib-card-author')).toHaveText('Zeca Antigo');
     const cards = await page.locator('.lib-grid .lib-card').all();
     const autores: string[] = [];
     for (const c of cards) autores.push((await c.locator('.lib-card-author').count()) ? ((await c.locator('.lib-card-author').textContent()) ?? '') : '');
@@ -41,8 +44,7 @@ test.describe('Biblioteca', () => {
     expect(autores.slice(-2)).toEqual(['Autora Exemplar', 'Zeca Antigo']);
 
     await ordenar.selectOption('recent');
-    const recentes = await titulosNaGrade(page);
-    expect(recentes[0]).toBe('Livro EPUB Dois'); // o último importado vem primeiro
+    await expect(page.locator('.lib-grid .lib-card-title').first()).toHaveText('Livro EPUB Dois'); // o último importado vem primeiro
   });
 
   test('busca aparece só com mais de 8 livros e filtra por título e autor', async ({ page }) => {
@@ -104,6 +106,7 @@ test.describe('Biblioteca', () => {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [p] });
     await page.waitForTimeout(700);
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await cdp.detach();
     await expect(page.locator('.lib-modal-title')).toHaveText('Livro EPUB Dois');
     await expect(page.locator('.reader')).toHaveCount(0); // não abriu o livro
   });

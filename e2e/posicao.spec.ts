@@ -12,8 +12,14 @@ import {
   mostrarHud,
   aguardarAssentar,
   esperarLeitor,
+  lerIndexedDB,
 } from './helpers';
 import type { Page } from '@playwright/test';
+
+interface MetaPosicao {
+  position: { chapter: number; block: number };
+  percent: number;
+}
 
 async function abrirLongo(page: Page): Promise<void> {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -26,9 +32,18 @@ async function irParaMeio(page: Page): Promise<void> {
   await mostrarHud(page);
   await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
   await page.locator('.reader-toc-item').nth(1).click();
-  await aguardarAssentar(page);
-  for (let i = 0; i < 25; i++) await page.keyboard.press('ArrowRight');
-  await aguardarAssentar(page);
+  await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
+  await esperarLeitor(page);
+  const { total } = await estado(page);
+  const passos = Math.min(25, Math.max(1, total - 2));
+  for (let i = 0; i < passos; i++) await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await estado(page)).pagina).toBe(passos + 1);
+}
+
+/** Calcula o mesmo bloco âncora que o leitor grava (primeiro que começa na página ou o que a atravessa). */
+async function blocoAncora(page: Page): Promise<number> {
+  const inicio = await primeiroBlocoQueComeca(page);
+  return inicio >= 0 ? inicio : await primeiroBlocoVisivel(page);
 }
 
 test.describe('Posição', () => {
@@ -37,7 +52,11 @@ test.describe('Posição', () => {
     await irParaMeio(page);
     const antes = await estado(page);
     const bloco = await primeiroBlocoVisivel(page);
-    await page.waitForTimeout(1200); // espera o salvamento (debounce de 800 ms)
+    const ancora = await blocoAncora(page);
+    const [id] = await lerIndexedDB<string[]>(page, 'meta');
+    await expect
+      .poll(async () => (await lerIndexedDB<MetaPosicao>(page, 'meta', id)).position)
+      .toEqual({ chapter: 1, block: ancora });
 
     await page.reload();
     await esperarLeitor(page);
@@ -56,10 +75,36 @@ test.describe('Posição', () => {
   test('recarregar logo após virar a página não perde a posição', async ({ page }) => {
     await abrirLongo(page);
     await irParaMeio(page);
-    const bloco = await primeiroBlocoVisivel(page);
+    const [id] = await lerIndexedDB<string[]>(page, 'meta');
+    const blocoAntes = await blocoAncora(page);
+    // Garante que a posição inicial já foi gravada no IndexedDB antes da virada testada.
+    await expect
+      .poll(async () => (await lerIndexedDB<MetaPosicao>(page, 'meta', id)).position)
+      .toEqual({ chapter: 1, block: blocoAntes });
+
+    const paginaAntes = (await estado(page)).pagina;
+    // Vira ao menos uma página (se um parágrafo longo ocupar toda a página, avança até mudar o bloco âncora).
+    let blocoDepois = -1;
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press('ArrowRight');
+      const cand = await primeiroBlocoQueComeca(page);
+      if (cand > blocoAntes) {
+        blocoDepois = cand;
+        break;
+      }
+    }
+    expect(blocoDepois, 'bloco âncora avançou após virar a página').toBeGreaterThan(blocoAntes);
+    const paginaDepois = (await estado(page)).pagina;
+    expect(paginaDepois).toBeGreaterThan(paginaAntes);
+
+    // Confirma que o debounce de 800 ms ainda não gravou a nova posição no IndexedDB.
+    const metaAntesDoReload = await lerIndexedDB<MetaPosicao>(page, 'meta', id);
+    expect(metaAntesDoReload.position.block, 'debounce ainda não deve ter gravado no IndexedDB').toBe(blocoAntes);
+
     await page.reload(); // sem esperar o debounce
     await esperarLeitor(page);
-    expect(await primeiroBlocoVisivel(page)).toBe(bloco);
+    expect((await estado(page)).pagina).toBe(paginaDepois);
+    expect(await primeiroBlocoQueComeca(page)).toBe(blocoDepois);
   });
 
   test('A+ / A− e girar a tela mantêm o primeiro bloco visível', async ({ page }) => {
@@ -71,7 +116,9 @@ test.describe('Posição', () => {
     for (const fonte of [26, 34, 14, 19]) {
       await definirFonte(page, fonte);
       expect(await blocoVisivel(page, bloco), `bloco ${bloco} visível com fonte ${fonte}`).toBe(true);
-      expect(await primeiroBlocoQueComeca(page), `página começa no bloco âncora (ou antes dele) com fonte ${fonte}`).toBeLessThanOrEqual(bloco);
+      const inicio = await primeiroBlocoQueComeca(page);
+      expect(inicio, `há bloco começando na página com fonte ${fonte}`).toBeGreaterThanOrEqual(0);
+      expect(inicio, `página começa no bloco âncora (ou antes dele) com fonte ${fonte}`).toBeLessThanOrEqual(bloco);
     }
 
     const tam = page.viewportSize()!;

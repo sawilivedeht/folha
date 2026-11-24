@@ -12,8 +12,14 @@ export const test = base.extend<{ erros: string[] }>({
       page.on('console', (m) => {
         if (m.type() === 'error') erros.push(`console.error: ${m.text()}`);
       });
+      page.on('requestfailed', (req) => {
+        const motivo = req.failure()?.errorText ?? 'desconhecido';
+        // Navegações (reload/goBack) abortam requisições em andamento de forma legítima.
+        if (motivo === 'net::ERR_ABORTED') return;
+        erros.push(`requestfailed: ${req.url()} (${motivo})`);
+      });
       await use(erros);
-      expect(erros, 'erros de console/pageerror').toEqual([]);
+      expect(erros, 'erros de console/pageerror/requestfailed').toEqual([]);
     },
     { auto: true },
   ],
@@ -65,6 +71,21 @@ export async function importarEFechar(page: Page, arquivos: Array<string | Arqui
   await fecharModal(page);
 }
 
+/** Garante que o cartão do livro na estante exibiu uma capa <img> carregada (naturalWidth > 0). */
+export async function esperarCapaValida(page: Page, titulo: string | RegExp): Promise<void> {
+  const card = page.locator('.lib-card', { hasText: titulo }).first();
+  await card.scrollIntoViewIfNeeded();
+  const img = card.locator('img.lib-cover-img');
+  await expect(img, `capa <img> visível para ${String(titulo)}`).toBeVisible();
+  await expect(img, `capa usa blob: para ${String(titulo)}`).toHaveAttribute('src', /^blob:/);
+  await expect
+    .poll(
+      () => img.evaluate((el: HTMLImageElement) => (el.complete ? el.naturalWidth : -1)),
+      { message: `capa com naturalWidth > 0 para ${String(titulo)}` },
+    )
+    .toBeGreaterThan(0);
+}
+
 /** Abre um livro da estante pelo título e espera a primeira página. */
 export async function abrirLivro(page: Page, titulo: string | RegExp): Promise<void> {
   await page.locator('.lib-card', { hasText: titulo }).first().click();
@@ -74,11 +95,14 @@ export async function abrirLivro(page: Page, titulo: string | RegExp): Promise<v
 export async function esperarLeitor(page: Page): Promise<void> {
   await expect(page.locator('.reader-columns')).toBeVisible();
   await expect(page.locator('.reader-status-page')).toContainText('Pág.');
-  // Espera as imagens da página terminarem de carregar e a paginação assentar.
-  await page.waitForFunction(() =>
-    Array.from(document.querySelectorAll<HTMLImageElement>('.reader-columns img')).every(
-      (i) => i.complete && i.style.visibility !== 'hidden' || !i.isConnected,
-    ),
+  // Espera as imagens da página terminarem de carregar com dados válidos e a paginação assentar.
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll<HTMLImageElement>('.reader-columns img')).every(
+        (i) => !i.isConnected || (i.complete && i.naturalWidth > 0 && i.style.visibility !== 'hidden'),
+      ),
+    undefined,
+    { timeout: 15_000 },
   );
   await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
 }
@@ -100,13 +124,18 @@ export async function estado(page: Page): Promise<{ pagina: number; total: numbe
 /** Define a fonte clicando em A+/A− (reais) até chegar ao tamanho pedido. */
 export async function definirFonte(page: Page, alvo: number): Promise<void> {
   await abrirConfig(page);
+  let atual = 0;
   for (let i = 0; i < 40; i++) {
-    const atual = Number(((await page.locator('.reader-aa-sheet').getByText(/^\d+ px$/).first().textContent()) ?? '0').replace(/\D/g, ''));
+    atual = Number(((await page.locator('.reader-aa-sheet').getByText(/^\d+ px$/).first().textContent()) ?? '0').replace(/\D/g, ''));
     if (atual === alvo) break;
     const btn = page.getByRole('button', { name: atual < alvo ? 'Aumentar fonte' : 'Diminuir fonte' });
     await btn.click();
   }
+  expect(atual, `controle de fonte atingiu ${alvo}px`).toBe(alvo);
   await fecharConfig(page);
+  await expect
+    .poll(() => page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.reader-columns')!).fontSize)))
+    .toBe(alvo);
   await aguardarAssentar(page);
 }
 
@@ -204,7 +233,7 @@ export async function verificarPaginaAtual(page: Page): Promise<ResultadoPagina>
       if (br.right < left - (right - left) - gap || br.left > right + (right - left) + gap) continue;
       const idx = Number(bloco.dataset.i);
 
-      const retangulos: { r: DOMRect; que: string }[] = [];
+      const retangulos: { r: DOMRect; que: string; quebrada?: boolean }[] = [];
       const walker = document.createTreeWalker(bloco, NodeFilter.SHOW_TEXT);
       let n: Node | null;
       while ((n = walker.nextNode())) {
@@ -223,16 +252,27 @@ export async function verificarPaginaAtual(page: Page): Promise<ResultadoPagina>
       }
       for (const img of bloco.querySelectorAll('img')) {
         const r = img.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) retangulos.push({ r, que: 'imagem' });
+        const quebrada = !img.complete || img.naturalWidth <= 0;
+        if (r.width > 0 && r.height > 0) {
+          retangulos.push({ r, que: 'imagem', quebrada });
+        } else if (quebrada && dentroHoriz((br.left + br.right) / 2)) {
+          viol.push(`bloco ${idx}: imagem quebrada (complete=${img.complete}, naturalWidth=${img.naturalWidth})`);
+        }
       }
 
       let temNaPagina = false;
-      for (const { r, que } of retangulos) {
+      for (const { r, que, quebrada } of retangulos) {
         const cx = (r.left + r.right) / 2;
         if (!dentroHoriz(cx)) continue;
         temNaPagina = true;
         nRetangulos++;
-        if (que === 'imagem') nImagens++;
+        if (que === 'imagem') {
+          if (quebrada) {
+            viol.push(`bloco ${idx}: imagem quebrada (naturalWidth === 0)`);
+          } else {
+            nImagens++;
+          }
+        }
         if (r.left < left - TOL || r.right > right + TOL)
           viol.push(`bloco ${idx}: ${que} sai na horizontal (${r.left.toFixed(1)}–${r.right.toFixed(1)} fora de ${left.toFixed(1)}–${right.toFixed(1)})`);
         if (r.top < top - TOL || r.bottom > bottom + TOL)
@@ -311,7 +351,12 @@ export async function varrerCapituloInteiro(page: Page): Promise<{ violacoes: st
           checar(new DOMRect(r.left, r.top + sobra, r.width, r.height - 2 * sobra), `bloco ${idx} texto`);
         }
       }
-      for (const img of bloco.querySelectorAll('img')) checar(img.getBoundingClientRect(), `bloco ${idx} imagem`);
+      for (const img of bloco.querySelectorAll('img')) {
+        if (!img.complete || img.naturalWidth <= 0) {
+          viol.push(`bloco ${idx}: imagem quebrada (complete=${img.complete}, naturalWidth=${img.naturalWidth})`);
+        }
+        checar(img.getBoundingClientRect(), `bloco ${idx} imagem`);
+      }
       if (viol.length > 8) break;
     }
     return { violacoes: viol.slice(0, 8), paginas: total, scrollW: columns.scrollWidth, step };

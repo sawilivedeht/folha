@@ -9,6 +9,7 @@ import {
   deslizar,
   mostrarHud,
   esconderHud,
+  esperarLeitor,
 } from './helpers';
 import type { Page } from '@playwright/test';
 
@@ -28,14 +29,18 @@ async function abrirLongoCapitulo1(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
   await page.locator('.reader-toc-item', { hasText: 'Capítulo 1' }).click();
   await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
-  await page.evaluate(() => new Promise<void>((r) => setTimeout(r, 300)));
+  await expect(page.locator('.reader-columns')).toContainText('Capítulo 1');
+  await esperarLeitor(page);
 }
 
 async function capituloAtual(page: Page): Promise<string> {
   await mostrarHud(page);
   await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
-  const t = (await page.locator('.reader-toc-item.is-current').textContent())?.trim() ?? '';
+  const atual = page.locator('.reader-toc-item.is-current');
+  await expect(atual).toBeVisible();
+  const t = (await atual.textContent())?.trim() ?? '';
   await page.getByRole('button', { name: 'Fechar sumário' }).click();
+  await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
   await esconderHud(page);
   return t;
 }
@@ -100,13 +105,15 @@ test.describe('Navegação', () => {
     const totalAlfa = (await estado(page)).total;
     await irParaUltimaPagina(page);
     await page.keyboard.press('ArrowRight');
-    await expect.poll(() => capituloAtual(page)).toBe('Parte Beta');
+    await expect(page.locator('.reader-columns')).toContainText('Parte Beta');
     expect((await estado(page)).pagina).toBe(1);
+    expect(await capituloAtual(page)).toBe('Parte Beta');
     await page.keyboard.press('ArrowLeft');
-    await expect.poll(() => capituloAtual(page)).toBe('Parte Alfa');
+    await expect(page.locator('.reader-columns')).toContainText('Parte Alfa');
     const e = await estado(page);
     expect(e.pagina).toBe(totalAlfa);
     expect(e.total).toBe(totalAlfa);
+    expect(await capituloAtual(page)).toBe('Parte Alfa');
   });
 
   test('fim do livro: avançar na última página não muda de página', async ({ page }) => {
@@ -114,6 +121,9 @@ test.describe('Navegação', () => {
     await mostrarHud(page);
     await page.getByRole('button', { name: 'Sumário e marcadores' }).click();
     await page.locator('.reader-toc-item').nth(1).click();
+    await expect(page.locator('.reader-sheet-overlay.is-open')).toHaveCount(0);
+    await expect(page.locator('.reader-columns')).toContainText('Parte Beta');
+    await esperarLeitor(page);
     await irParaUltimaPagina(page);
     const antes = await estado(page);
     await page.keyboard.press('ArrowRight');

@@ -265,6 +265,115 @@ async function pdfEscaneado() {
   return Buffer.from(await doc.save());
 }
 
+/** Apresentação em paisagem (12 slides -> 2 capítulos: 10 + 2) com texto e figura em cada slide. */
+async function pdfSlides() {
+  const doc = await PDFDocument.create();
+  doc.setTitle('Apresentação de Slides');
+  doc.setAuthor('Palestrante Exemplo');
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const regular = await doc.embedFont(StandardFonts.Helvetica);
+  const figuras = [
+    await doc.embedPng(makePng(160, 90, [45, 110, 185])),
+    await doc.embedPng(makePng(160, 90, [185, 85, 45])),
+    await doc.embedPng(makePng(160, 90, [55, 150, 95])),
+  ];
+  const W = 720;
+  const H = 405;
+  for (let i = 1; i <= 12; i++) {
+    const page = doc.addPage([W, H]);
+    page.drawText(`Slide ${i}: Apresentação de Arquitetura`, { x: 40, y: 345, size: 26, font: bold });
+    page.drawText(`Primeiro tópico explicando o slide número ${i} com texto legível.`, { x: 40, y: 295, size: 16, font: regular });
+    page.drawText(`Segundo tópico com detalhes práticos do conteúdo ${i}.`, { x: 40, y: 262, size: 16, font: regular });
+    page.drawImage(figuras[(i - 1) % figuras.length], { x: 40, y: 65, width: 280, height: 150 });
+    page.drawText('Conferência Folha - 2026', { x: 40, y: 18, size: 9, font: regular });
+  }
+  return Buffer.from(await doc.save());
+}
+
+/** PDF de texto em retrato com figura cobrindo > 50% da página 2 entre parágrafos. */
+async function pdfIlustrado() {
+  const doc = await PDFDocument.create();
+  doc.setTitle('PDF Ilustrado');
+  doc.setAuthor('Autora Visual');
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const regular = await doc.embedFont(StandardFonts.Helvetica);
+  const figura = await doc.embedPng(makePng(240, 240, [45, 110, 185]));
+  const r = rng(123);
+  const W = 595;
+  const H = 842;
+  const size = 12;
+  const lh = 16;
+  const maxW = W - 120;
+  const quebrar = (txt) => {
+    const linhas = [];
+    let atual = '';
+    for (const w of txt.split(' ')) {
+      const t = atual ? `${atual} ${w}` : w;
+      if (regular.widthOfTextAtSize(t, size) > maxW) {
+        linhas.push(atual);
+        atual = w;
+      } else {
+        atual = t;
+      }
+    }
+    if (atual) linhas.push(atual);
+    return linhas;
+  };
+  const desenharParagrafos = (page, textos, yInicial, yMin) => {
+    let y = yInicial;
+    for (const txt of textos) {
+      for (const l of quebrar(txt)) {
+        if (y < yMin) return y;
+        page.drawText(l, { x: 60, y, size, font: regular });
+        y -= lh;
+      }
+      y -= 10;
+    }
+    return y;
+  };
+
+  // Página 1: título + texto corrido abundante.
+  const p1 = doc.addPage([W, H]);
+  p1.drawText('Capítulo Ilustrado', { x: 60, y: H - 70, size: 20, font: bold });
+  desenharParagrafos(
+    p1,
+    [
+      'Texto inicial antes da página ilustrada para validar a leitura contínua do documento.',
+      ...Array.from({ length: 12 }, () => paragrafo(r, 5)),
+    ],
+    H - 110,
+    80,
+  );
+
+  // Página 2: texto acima e abaixo de uma figura grande (~51,4% da área da página).
+  const p2 = doc.addPage([W, H]);
+  desenharParagrafos(
+    p2,
+    ['Parágrafo anterior à figura grande na segunda página. ' + paragrafo(r, 4)],
+    H - 60,
+    700,
+  );
+  p2.drawImage(figura, { x: 40, y: 185, width: 515, height: 500 });
+  desenharParagrafos(
+    p2,
+    ['Parágrafo posterior à figura grande na segunda página. ' + paragrafo(r, 4)],
+    160,
+    60,
+  );
+
+  // Páginas 3 e 4: texto corrido abundante (mantém mediana bem acima do limiar de slides).
+  for (let i = 0; i < 2; i++) {
+    const p = doc.addPage([W, H]);
+    const inicio =
+      i === 0
+        ? ['Texto contínuo na terceira página após a ilustração, confirmando que nada foi cortado.']
+        : [];
+    desenharParagrafos(p, [...inicio, ...Array.from({ length: 12 }, () => paragrafo(r, 5))], H - 70, 80);
+  }
+
+  return Buffer.from(await doc.save());
+}
+
 /** Gera todas as fixtures em FIXTURE_DIR e devolve os caminhos. */
 export async function gerarFixtures(dir = FIXTURE_DIR) {
   mkdirSync(dir, { recursive: true });
@@ -280,6 +389,8 @@ export async function gerarFixtures(dir = FIXTURE_DIR) {
   gravar('epub2.epub', epub2());
   gravar('texto.pdf', await pdfTexto());
   gravar('escaneado.pdf', await pdfEscaneado());
+  gravar('slides.pdf', await pdfSlides());
+  gravar('ilustrado.pdf', await pdfIlustrado());
   gravar('corrompido.pdf', Buffer.from('%PDF-1.4\nisto nao e um pdf valido\n%%EOF\n'));
   gravar('invalido.docx', Buffer.from('PK\x03\x04conteudo falso de docx'));
   // Livros pequenos para testes de biblioteca (ordenação, busca com mais de 8 livros).

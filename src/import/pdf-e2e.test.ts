@@ -158,7 +158,7 @@ describe('PDF: robustez', () => {
 
   it('bytes aleatórios lançam erro legível', async () => {
     const bytes = new Uint8Array(500).map((_, i) => (i * 37) % 251);
-    await expect(convertPdfBytes(bytes)).rejects.toBeInstanceOf(Error);
+    await expect(convertPdfBytes(bytes)).rejects.toThrow(/corrompido|inválido|Não foi possível ler o PDF/i);
   });
 
   it('PDF protegido por senha lança "PDF protegido por senha"', async () => {

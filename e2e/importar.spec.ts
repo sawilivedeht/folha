@@ -1,14 +1,14 @@
-import { test, expect, abrirEstante, importar, fecharModal, arquivo } from './helpers';
+import { test, expect, abrirEstante, importar, fecharModal, esperarCapaValida } from './helpers';
 
 test.describe('Importação', () => {
-  const casos: Array<[string, string, string | RegExp]> = [
-    ['longo.txt', 'O Grande Livro de Teste', ''],
-    ['gigante.txt', 'Texto com Palavras Gigantes', ''],
-    ['epub3.epub', 'Livro EPUB Três', 'Autora Exemplar'],
-    ['epub2.epub', 'Livro EPUB Dois', 'Zeca Antigo'],
-    ['texto.pdf', 'PDF de Texto', 'Pedro Documento'],
+  const casos: Array<[string, string, string | RegExp, boolean]> = [
+    ['longo.txt', 'O Grande Livro de Teste', '', false],
+    ['gigante.txt', 'Texto com Palavras Gigantes', '', false],
+    ['epub3.epub', 'Livro EPUB Três', 'Autora Exemplar', true],
+    ['epub2.epub', 'Livro EPUB Dois', 'Zeca Antigo', false],
+    ['texto.pdf', 'PDF de Texto', 'Pedro Documento', true],
   ];
-  for (const [nome, titulo, autor] of casos) {
+  for (const [nome, titulo, autor, temCapa] of casos) {
     test(`importa ${nome} e mostra título/autor na estante`, async ({ page }) => {
       await abrirEstante(page);
       await importar(page, [nome]);
@@ -16,6 +16,7 @@ test.describe('Importação', () => {
       const card = page.locator('.lib-card', { hasText: titulo });
       await expect(card).toHaveCount(1);
       if (autor) await expect(card).toContainText(autor);
+      if (temCapa) await esperarCapaValida(page, titulo);
     });
   }
 
@@ -25,6 +26,7 @@ test.describe('Importação', () => {
     await expect(page.locator('.lib-warnings')).toContainText('escaneado');
     await fecharModal(page);
     await expect(page.locator('.lib-card')).toHaveCount(1);
+    await esperarCapaValida(page, 'PDF Escaneado');
   });
 
   test('arquivos inválidos mostram erro legível e a estante continua usável', async ({ page }) => {
