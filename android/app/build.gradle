@@ -26,6 +26,10 @@ android {
     }
     signingConfigs {
         if (keystorePropsFile.exists()) {
+            def faltando = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].findAll { !keystoreProps[it] }
+            if (faltando) {
+                throw new GradleException("android/keystore.properties sem: ${faltando.join(', ')}")
+            }
             release {
                 storeFile rootProject.file(keystoreProps['storeFile'])
                 storePassword keystoreProps['storePassword']
@@ -41,7 +45,7 @@ android {
             }
             minifyEnabled true
             shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

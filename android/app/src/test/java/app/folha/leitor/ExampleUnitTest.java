@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package app.folha.leitor;
 
 import static org.junit.Assert.*;
 

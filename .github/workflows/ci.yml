@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -9,7 +10,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Em PR, um push novo cancela o anterior; na main, todo commit termina (o APK fica como artefato).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   web:
@@ -33,7 +35,7 @@ jobs:
         run: npm run test:e2e
 
   android:
-    name: Android (APK debug e lint)
+    name: Android (APK debug, release e lint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,13 +49,15 @@ jobs:
           java-version: 21
       - uses: android-actions/setup-android@v3
       - name: Instalar plataforma do Android SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - run: npm ci
       - run: npm run build
       - run: npx cap sync android
-      - name: Compilar APK debug e rodar lint
+      - name: Compilar APK debug e release (R8) e rodar lint
         working-directory: android
-        run: ./gradlew assembleDebug lint
+        run: ./gradlew assembleDebug assembleRelease lint
       - uses: actions/upload-artifact@v4
         with:
           name: folha-debug-apk

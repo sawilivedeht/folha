@@ -20,7 +20,7 @@ npm run build
 npm run test:e2e        # quando houver mudança de interface ou fluxo
 ```
 
-Mudanças no Android precisam de `cd android && ./gradlew assembleDebug lint` sem erros (JDK 21).
+Mudanças no Android precisam de `npm run cap:sync` (gera `dist/` e copia para o projeto Android) e depois `cd android && ./gradlew assembleDebug lint` sem erros (JDK 21 e Android SDK em `ANDROID_HOME` ou `android/local.properties`).
 
 ## Estilo
 
