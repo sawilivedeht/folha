@@ -85,15 +85,16 @@ describe('parseTxt', () => {
 
     const book = parseTxt(text, 'romance.txt');
     expect(book.title).toBe('Romance Exemplo');
+    // A folha de rosto curta ("Romance Exemplo") entra no 1º capítulo em vez de virar capítulo próprio.
     expect(book.chapters.map((c) => c.title)).toEqual([
-      'Romance Exemplo',
       'Capítulo 1',
       'CAPÍTULO II',
       'Chapter 3',
       'PARTE FINAL',
     ]);
-    expect(book.chapters[1].blocks[0]).toEqual({ t: 'h', level: 1, text: 'Capítulo 1' });
-    expect(book.chapters[1].blocks[1]).toEqual({ t: 'p', text: 'Texto do primeiro capítulo.' });
+    expect(book.chapters[0].blocks[0]).toEqual({ t: 'p', text: 'Romance Exemplo' });
+    expect(book.chapters[0].blocks[1]).toEqual({ t: 'h', level: 1, text: 'Capítulo 1' });
+    expect(book.chapters[0].blocks[2]).toEqual({ t: 'p', text: 'Texto do primeiro capítulo.' });
   });
 
   it('splits into ~40k char "Parte N" chapters when no headings exist', () => {

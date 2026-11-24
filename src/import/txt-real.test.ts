@@ -70,8 +70,9 @@ describe('parseTxt: entradas reais', () => {
   it('capítulos em algarismos romanos isolados', () => {
     const text = ['Um Romance', '', 'I', '', 'Era uma vez um começo.', '', 'II', '', 'E houve um meio.', '', 'III.', '', 'Por fim, o fim.'].join('\n');
     const book = parseTxt(text, 'r.txt');
-    expect(book.chapters.map((c) => c.title)).toEqual(['Um Romance', 'I', 'II', 'III.']);
-    expect(book.chapters[2].blocks[1]).toEqual({ t: 'p', text: 'E houve um meio.' });
+    expect(book.chapters.map((c) => c.title)).toEqual(['I', 'II', 'III.']);
+    expect(book.chapters[0].blocks[0]).toEqual({ t: 'p', text: 'Um Romance' });
+    expect(book.chapters[1].blocks[1]).toEqual({ t: 'p', text: 'E houve um meio.' });
   });
 
   it('romano no meio de frase não é título', () => {
@@ -82,7 +83,7 @@ describe('parseTxt: entradas reais', () => {
   it('palavras-chave de seção: Prólogo, Epílogo, Parte 2, Introdução', () => {
     const text = ['Título', '', 'Prólogo', '', 'antes', '', 'Parte 2', 'meio', '', 'EPÍLOGO', '', 'depois'].join('\n');
     const titles = parseTxt(text, 'k.txt').chapters.map((c) => c.title);
-    expect(titles).toEqual(['Título', 'Prólogo', 'Parte 2', 'EPÍLOGO']);
+    expect(titles).toEqual(['Prólogo', 'Parte 2', 'EPÍLOGO']);
   });
 
   it('refluxo de largura fixa junta linhas em parágrafos e mantém capítulos', () => {
@@ -103,8 +104,9 @@ describe('parseTxt: entradas reais', () => {
     const p2 = 'Mais adiante, o segundo parágrafo seguia o mesmo costume de largura fixa, terminando cada linha antes da margem direita do terminal. '.repeat(2).trim();
     const text = ['Antologia', '', 'CAPÍTULO 1', '', ...wrap(p1), '', ...wrap(p2), '', 'CAPÍTULO 2', '', ...wrap(p1)].join('\n');
     const book = parseTxt(text, 'wrap.txt');
-    expect(book.chapters.map((c) => c.title)).toEqual(['Antologia', 'CAPÍTULO 1', 'CAPÍTULO 2']);
-    const paras = book.chapters[1].blocks.filter((b) => b.t === 'p');
+    expect(book.chapters.map((c) => c.title)).toEqual(['CAPÍTULO 1', 'CAPÍTULO 2']);
+    // O 1º parágrafo é a folha de rosto ("Antologia"), que entra no 1º capítulo.
+    const paras = book.chapters[0].blocks.filter((b) => b.t === 'p').slice(1);
     expect(paras).toHaveLength(2);
     expect(paras[0].t === 'p' && paras[0].text).toBe(p1);
     expect(paras[1].t === 'p' && paras[1].text).toBe(p2);

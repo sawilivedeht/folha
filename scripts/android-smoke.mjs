@@ -62,7 +62,18 @@ ws.onmessage = (ev) => {
   if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') erros.push(msg.params.args.map((a) => a.value ?? a.description).join(' '));
   if (msg.method === 'Runtime.exceptionThrown') erros.push(msg.params.exceptionDetails.exception?.description ?? msg.params.exceptionDetails.text);
 };
-const cdp = (method, params = {}) => new Promise((res, rej) => { const id = ++seq; pend.set(id, { res, rej }); ws.send(JSON.stringify({ id, method, params })); });
+// Se o WebView fechar a conexão (renderer reiniciado, página recarregada), falha as chamadas
+// pendentes em vez de deixar o script sair calado com um await nunca resolvido.
+let fechado = false;
+ws.onclose = (ev) => {
+  fechado = true;
+  for (const p of pend.values()) p.rej(new Error(`conexão DevTools fechada (código ${ev.code})`));
+  pend.clear();
+};
+const cdp = (method, params = {}) => new Promise((res, rej) => {
+  if (fechado) return rej(new Error('conexão DevTools fechada'));
+  const id = ++seq; pend.set(id, { res, rej }); ws.send(JSON.stringify({ id, method, params }));
+});
 await cdp('Runtime.enable');
 // Avalia uma função no contexto da página (serializada) e devolve o valor.
 const evalPage = async (fn, arg) => {

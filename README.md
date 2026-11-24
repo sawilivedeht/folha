@@ -65,6 +65,16 @@ Com o arquivo presente, `./gradlew assembleRelease` assina o APK automaticamente
 
 `npm run build && node docs/capturas.mjs` regenera `docs/capturas/*.png` (importa `docs/exemplo.txt` e fotografa em viewport Pixel 7).
 
+## Testes
+
+| Suíte | Comando | O que cobre |
+| --- | --- | --- |
+| Unitários e integração (vitest) | `npm test` / `npm run test:coverage` | conversão de PDF (layout, colunas, hifenização, cabeçalhos/rodapés, slides, erros), EPUB 2/3 com DOM real (happy-dom), TXT e codificações, progresso do leitor |
+| Ponta a ponta (Playwright) | `npm run test:e2e` | em 3 telas (Pixel 7, celular 360×640, tablet): importação, **todo texto cabe na página** em 4 tamanhos de fonte, navegação por toque/deslize/teclado, posição ao recarregar e girar, temas, marcadores, sumário, biblioteca, acessibilidade (axe, WCAG A/AA) e desempenho |
+| APK no emulador | `scripts/android-emulator.sh` e `node scripts/android-smoke.mjs` | WebView real do Android: importação, paginação, toques, deslize, Voltar, rotação, tempo de abertura e memória; veja [docs/teste-android.md](docs/teste-android.md) |
+
+Validar a conversão de um PDF qualquer pela linha de comando: `npm run convert-pdf -- arquivo.pdf`.
+
 ## Arquitetura
 
 ```
@@ -73,7 +83,8 @@ src/
   types.ts       contrato de dados (livro, capítulos, blocos)
   db.ts          IndexedDB: metadados, conteúdo, imagens/capas e chave-valor
   settings.ts    preferências de leitura e temas
-  import/        importadores: pdf (+ pdf-layout), epub, txt, html-blocks; index.ts escolhe pelo tipo
+  import/        importadores: pdf (+ pdf-extract, pdf-layout, pdf-slides), epub, txt, html-blocks;
+                 index.ts escolhe pelo tipo
   library/       estante, busca, ordenação, importação e arrastar-e-soltar
   reader/        leitor paginado (colunas CSS), HUD, painéis de sumário/marcadores e Aa
   styles/        CSS base, da biblioteca e do leitor
@@ -83,11 +94,13 @@ android/         projeto Capacitor (Gradle)
 ## Limitações conhecidas
 
 - PDF escaneado (só imagens) não é convertido em texto: cada página vira uma imagem. Não há OCR.
-- PDFs com layout complexo (colunas, tabelas, fórmulas) podem perder a estrutura ao virar texto refluível.
+- PDFs com layout complexo (tabelas, fórmulas) podem perder a estrutura ao virar texto refluível.
+- PDFs de apresentação (slides) viram a imagem de cada slide seguida do texto dele, 10 slides por capítulo.
 - Não há sincronização entre aparelhos nem DRM.
 
 ## Roadmap
 
+- Abrir PDF/EPUB direto do gerenciador de arquivos ("Abrir com Folha").
 - OCR opcional para PDFs escaneados.
 - Destaques e anotações.
 - Exportar/importar a biblioteca e o progresso (backup).

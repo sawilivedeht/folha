@@ -185,7 +185,13 @@ export function parseTxt(text: string, fileName: string): ParsedBook {
 
     for (const entry of entries) {
       if (entry.isHeading) {
-        if (currentBlocks.length > 0) {
+        // Folha de rosto curta (título, autor) antes do 1º capítulo vai junto dele, em vez de
+        // virar um capítulo próprio de poucas palavras.
+        const shortFrontMatter =
+          chapters.length === 0 &&
+          currentBlocks.every((b) => b.t === 'p') &&
+          currentBlocks.reduce((n, b) => n + ('text' in b ? b.text.length : 0), 0) < 300;
+        if (currentBlocks.length > 0 && !shortFrontMatter) {
           chapters.push({ title: currentTitle, blocks: currentBlocks });
           currentBlocks = [];
         }
