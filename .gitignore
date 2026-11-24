@@ -6,3 +6,14 @@ android/build/
 *.apk
 .DS_Store
 .alethe/
+
+# Assinatura de release do Android
+keystore.properties
+*.jks
+*.keystore
+android/keystore.properties
+
+# Saídas locais
+coverage/
+playwright-report/
+test-results/

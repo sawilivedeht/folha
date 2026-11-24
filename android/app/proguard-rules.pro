@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Capacitor localiza plugins e métodos @PluginMethod por reflexão.
+-keep @com.getcapacitor.annotation.CapacitorPlugin public class * { @com.getcapacitor.annotation.PermissionCallback <methods>; @com.getcapacitor.ActivityCallback <methods>; @com.getcapacitor.PluginMethod public <methods>; }
+-keep public class * extends com.getcapacitor.Plugin { *; }
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-keepattributes SourceFile,LineNumberTable
