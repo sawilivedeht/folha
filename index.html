@@ -2,6 +2,14 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
+  <!--
+    CSP: o app só carrega código, estilos e imagens dele mesmo (e imagens blob: do IndexedDB); nada de rede
+    externa, frames, plugins, <base> ou formulários. Explicação de cada diretiva em docs/seguranca.md.
+    O nonce de estilo não é segredo: existe só para o servidor de desenvolvimento do Vite injetar o CSS
+    (ele lê o nonce de meta[property=csp-nonce]); o build de produção não tem nenhum <style> inline.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'nonce-folha-vite-dev'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'" />
+  <meta property="csp-nonce" nonce="folha-vite-dev" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <meta name="theme-color" content="#f7f3ea" />
   <link rel="manifest" href="/manifest.webmanifest" />
