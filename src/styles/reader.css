@@ -134,7 +134,7 @@
   border: 1px solid var(--line);
   border-radius: 6px;
   font-family: ui-monospace, "Roboto Mono", "SFMono-Regular", Menlo, monospace;
-  font-size: 0.84em;
+  font-size: max(0.84em, 14px); /* nunca abaixo de 14 px, mesmo com a fonte do leitor no mínimo */
   line-height: 1.45;
   text-align: left;
   white-space: pre-wrap;

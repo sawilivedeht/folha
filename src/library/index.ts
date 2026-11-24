@@ -2,6 +2,7 @@ import '../styles/library.css';
 import { coverKey, deleteBook, getBlob, listBooks } from '../db';
 import { importFileWithWarnings } from '../import';
 import { applyTheme, loadSettings, saveSettings, type Theme } from '../settings';
+import { positionStashKey } from '../reader/progress';
 import type { BookMeta } from '../types';
 
 type SortMode = 'recent' | 'title' | 'author';
@@ -63,7 +64,7 @@ function progressLabel(book: BookMeta): string {
 }
 
 function openBook(id: string): void {
-  history.pushState(null, '', `#/ler/${encodeURIComponent(id)}`);
+  history.pushState({ folha: true }, '', `#/ler/${encodeURIComponent(id)}`);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 
@@ -143,6 +144,9 @@ export function mountLibrary(root: HTMLElement): () => void {
   let importing = false;
   let dragDepth = 0;
   let longPressTimer: number | null = null;
+  // Após um toque longo, o dedo ainda está sobre o menu recém-aberto: o "click" do soltar cairia no fundo (fechando o menu)
+  // ou num item do menu (acionando-o sem querer). Esse primeiro clique é descartado.
+  let swallowNextModalClick = false;
   let observer: IntersectionObserver | null = null;
   const gridObjectUrls: string[] = [];
   let continueObjectUrl: string | null = null;
@@ -164,6 +168,8 @@ export function mountLibrary(root: HTMLElement): () => void {
   fileInput.type = 'file';
   fileInput.accept = '.pdf,.epub,.txt,.md,application/pdf,application/epub+zip,text/plain';
   fileInput.multiple = true;
+  fileInput.setAttribute('aria-label', 'Escolher arquivos para importar');
+  fileInput.tabIndex = -1;
 
   headerActions.append(themeBtn, importBtn, fileInput);
   headerInner.append(brand, headerActions);
@@ -171,6 +177,20 @@ export function mountLibrary(root: HTMLElement): () => void {
 
   const main = el('main', 'lib-main');
   const modalLayer = el('div');
+  // Um novo toque depois do menu aberto por toque longo é uma interação deliberada: para de descartar cliques.
+  modalLayer.addEventListener('pointerdown', () => {
+    swallowNextModalClick = false;
+  });
+  modalLayer.addEventListener(
+    'click',
+    (e) => {
+      if (!swallowNextModalClick) return;
+      swallowNextModalClick = false;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    true,
+  );
   const dropOverlay = el('div', 'lib-drop-overlay');
   dropOverlay.hidden = true;
   dropOverlay.append(el('div', 'lib-drop-box', 'Solte os arquivos para importar'));
@@ -215,6 +235,8 @@ export function mountLibrary(root: HTMLElement): () => void {
   function syncThemeButton(theme: Theme): void {
     themeBtn.textContent = THEME_LABELS[theme];
     themeBtn.title = `Tema atual: ${THEME_LABELS[theme]}. Toque para alternar.`;
+    // O nome acessível precisa conter o texto visível do botão (WCAG 2.5.3).
+    themeBtn.setAttribute('aria-label', `Tema ${THEME_LABELS[theme]}, alternar tema`);
   }
 
   loadSettings().then((s) => {
@@ -252,6 +274,7 @@ export function mountLibrary(root: HTMLElement): () => void {
       longPressTimer = window.setTimeout(() => {
         longPressTimer = null;
         suppressClick = true;
+        swallowNextModalClick = true;
         showBookMenu(book);
       }, 500);
     });
@@ -616,6 +639,11 @@ export function mountLibrary(root: HTMLElement): () => void {
     confirmBtn.addEventListener('click', async () => {
       confirmBtn.disabled = true;
       await deleteBook(book.id);
+      try {
+        localStorage.removeItem(positionStashKey(book.id));
+      } catch {
+        // sem localStorage: nada a limpar
+      }
       if (disposed) return;
       closeModal();
       await refreshBooks();

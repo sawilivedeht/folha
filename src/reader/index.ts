@@ -19,6 +19,8 @@ import {
   formatRemainingTime,
   fractionToPage,
   percentToTarget,
+  readPositionStash,
+  writePositionStash,
 } from './progress';
 import { renderChapterBlocks } from './render';
 import type { RenderedChapter } from './render';
@@ -47,10 +49,13 @@ type ChapterTarget =
   | { mode: 'fraction'; fraction: number };
 
 function goBackToLibrary(): void {
-  if (history.length > 1 && (!document.referrer || document.referrer.startsWith(location.origin))) {
+  // history.state marca a entrada empilhada pela biblioteca ao abrir o livro. Sem ela (link direto, recarga em
+  // outra sessão), history.back() sairia do app: troca a entrada atual pela biblioteca.
+  if (history.state && (history.state as { folha?: boolean }).folha) {
     history.back();
   } else {
-    location.hash = '#/';
+    history.replaceState(null, '', '#/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 }
 
@@ -252,22 +257,13 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       else hi = mid;
     }
 
-    // Verifica blocos anteriores que começam antes mas continuam na página atual (invariante ao transform)
-    const columnsLeft = columnsEl.getBoundingClientRect().left;
-    const pageStart = currentPage * step;
-    let firstVisible = Math.min(lo, els.length - 1);
+    // Prefere o primeiro bloco que COMEÇA nesta página: restaurar a posição leva à página onde o bloco começa,
+    // então só assim o livro reabre exatamente na página em que o leitor estava.
+    const first = Math.min(lo, els.length - 1);
+    if (calcBlockPage(els[first].offsetLeft, step, totalPages) === currentPage) return first;
 
-    for (let i = lo - 1; i >= 0; i--) {
-      const rect = els[i].getBoundingClientRect();
-      const relRight = rect.right - columnsLeft;
-      if (relRight > pageStart + 1) {
-        firstVisible = i;
-      } else {
-        break;
-      }
-    }
-
-    return firstVisible;
+    // Nenhum bloco começa aqui (a página é continuação de um bloco longo): usa o bloco que atravessa a página.
+    return lo > 0 ? lo - 1 : first;
   }
 
   function pageOfBlock(blockIndex: number): number {
@@ -344,6 +340,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       meta.position = { chapter: currentChapter, block: currentBlock };
       meta.percent = percent;
       meta.lastOpenedAt = Date.now();
+      writePositionStash(bookId, { chapter: currentChapter, block: currentBlock, percent, at: meta.lastOpenedAt });
       scheduleSave();
     }
   }
@@ -686,6 +683,8 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       const pct = Number(slider.value) / 10;
       const target = percentToTarget(pct, getChapterChars(), meta.totalChars);
       loadChapter(target.chapter, { mode: 'fraction', fraction: target.fraction });
+      // Devolve o foco à leitura: com o controle focado, o teclado deixaria de virar páginas.
+      slider.blur();
     });
 
     const endScrubPreview = (): void => {
@@ -929,6 +928,10 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     document.addEventListener('visibilitychange', onVisibilityChange);
     cleanups.push(() => document.removeEventListener('visibilitychange', onVisibilityChange));
 
+    // Recarregar ou fechar a aba não garante um visibilitychange a tempo: grava a posição também no pagehide.
+    window.addEventListener('pagehide', flushSave);
+    cleanups.push(() => window.removeEventListener('pagehide', flushSave));
+
     // ResizeObserver com debounce para repaginar ao girar tela ou redimensionar
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(() => {
@@ -948,7 +951,12 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
 
     // Aplica configurações iniciais, carrega capítulo salvo e ativa WakeLock
     applySettingsToDom();
-    const initialPos = loadedMeta.position ?? { chapter: 0, block: 0 };
+    let initialPos = loadedMeta.position ?? { chapter: 0, block: 0 };
+    // Se a página foi virada e a aba fechou antes do IndexedDB gravar, a cópia do localStorage é mais recente.
+    const stash = readPositionStash(bookId);
+    if (stash && stash.at > (loadedMeta.lastOpenedAt ?? 0)) {
+      initialPos = { chapter: stash.chapter, block: stash.block };
+    }
     loadChapter(initialPos.chapter, { mode: 'block', block: initialPos.block }, false);
 
     // Registra abertura do livro

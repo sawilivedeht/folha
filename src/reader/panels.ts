@@ -279,7 +279,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   fontSizeMinus.type = 'button';
   fontSizeMinus.className = 'reader-step-btn';
   fontSizeMinus.textContent = 'A−';
-  fontSizeMinus.setAttribute('aria-label', 'Diminuir fonte');
+  fontSizeMinus.setAttribute('aria-label', 'A−, diminuir fonte');
 
   const fontSizeVal = document.createElement('span');
   fontSizeVal.className = 'reader-step-val';
@@ -288,7 +288,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   fontSizePlus.type = 'button';
   fontSizePlus.className = 'reader-step-btn';
   fontSizePlus.textContent = 'A+';
-  fontSizePlus.setAttribute('aria-label', 'Aumentar fonte');
+  fontSizePlus.setAttribute('aria-label', 'A+, aumentar fonte');
 
   fontSizeMinus.addEventListener('click', () => {
     if (!current) return;

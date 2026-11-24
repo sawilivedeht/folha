@@ -175,3 +175,40 @@ export function extractExcerpt(
   const cut = lastSpace > maxLen * 0.6 ? sliced.slice(0, lastSpace) : sliced;
   return `${cut.trimEnd()}…`;
 }
+
+/** Chave do localStorage com a última posição de leitura (rede de segurança contra o IndexedDB não gravar a tempo). */
+export const positionStashKey = (bookId: string): string => `folha:pos:${bookId}`;
+
+export interface PositionStash {
+  chapter: number;
+  block: number;
+  percent: number;
+  at: number;
+}
+
+export function readPositionStash(bookId: string): PositionStash | null {
+  try {
+    const raw = localStorage.getItem(positionStashKey(bookId));
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<PositionStash>;
+    if (
+      typeof v.chapter === 'number' &&
+      typeof v.block === 'number' &&
+      typeof v.percent === 'number' &&
+      typeof v.at === 'number'
+    ) {
+      return v as PositionStash;
+    }
+  } catch {
+    // localStorage indisponível ou JSON inválido: ignora
+  }
+  return null;
+}
+
+export function writePositionStash(bookId: string, stash: PositionStash): void {
+  try {
+    localStorage.setItem(positionStashKey(bookId), JSON.stringify(stash));
+  } catch {
+    // Sem armazenamento disponível: a gravação normal no IndexedDB continua valendo
+  }
+}
