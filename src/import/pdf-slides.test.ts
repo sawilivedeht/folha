@@ -3,6 +3,7 @@ import { friendlyPdfError, imageAreaFraction, resolveFontInfo, titleFromFileName
 import {
   buildSlideChapters,
   classifyPdf,
+  hasFullPageImagePattern,
   isScannedPdf,
   isSlideDeck,
   median,
@@ -18,9 +19,29 @@ const port = (chars: number): PageStat => ({ width: 595, height: 842, chars });
 const many = (n: number, f: (c: number) => PageStat, chars: number) => Array.from({ length: n }, () => f(chars));
 
 describe('isSlideDeck / classifyPdf (decisão pura)', () => {
-  it('mediana de caracteres < 400 vira apresentação, mesmo em retrato', () => {
-    expect(isSlideDeck(many(20, port, 150))).toBe(true);
+  it('slides em paisagem com mediana baixa viram apresentação; livro em retrato com pouco texto não', () => {
     expect(isSlideDeck(many(20, land, 150))).toBe(true);
+    expect(classifyPdf(many(20, land, 150))).toBe('slides');
+    // Livros de poesia, teatro ou edição de bolso em retrato não devem cair no modo slides.
+    expect(isSlideDeck(many(20, port, 150))).toBe(false);
+    expect(classifyPdf(many(20, port, 150))).toBe('text');
+  });
+
+  it('PDFs mistos (escaneado + texto denso) não viram apresentação, em retrato ou paisagem', () => {
+    const mixedPortrait = [...many(6, port, 0), ...many(4, port, 2500)];
+    expect(isScannedPdf(mixedPortrait)).toBe(false);
+    expect(isSlideDeck(mixedPortrait)).toBe(false);
+    expect(classifyPdf(mixedPortrait)).toBe('text');
+
+    const mixedLandscape = [...many(6, land, 0), ...many(4, land, 2500)];
+    expect(isScannedPdf(mixedLandscape)).toBe(false);
+    expect(isSlideDeck(mixedLandscape)).toBe(false);
+    expect(classifyPdf(mixedLandscape)).toBe('text');
+  });
+
+  it('apostila em paisagem com divisórias curtas (< 40 chars) e slides curtos continua como slides', () => {
+    const apostila = [...many(4, land, 15), ...many(16, land, 180)];
+    expect(classifyPdf(apostila)).toBe('slides');
   });
 
   it('livro em retrato com texto cheio não é apresentação', () => {
@@ -64,11 +85,23 @@ describe('isSlideDeck / classifyPdf (decisão pura)', () => {
   });
 });
 
-describe('shouldRenderPageImage', () => {
+describe('shouldRenderPageImage e hasFullPageImagePattern', () => {
   it('só acima de 40% da área da página', () => {
     expect(shouldRenderPageImage(0.4)).toBe(false);
     expect(shouldRenderPageImage(0.41)).toBe(true);
     expect(shouldRenderPageImage(0)).toBe(false);
+  });
+
+  it('detecta PDF escaneado com camada OCR (imagem inteira em quase todas as páginas de texto)', () => {
+    expect(hasFullPageImagePattern([0.98, 0.99, 1, 0.95, 0.97])).toBe(true);
+    expect(hasFullPageImagePattern([0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0, 0, 0])).toBe(true);
+  });
+
+  it('não suprime figuras pontuais nem documentos curtos de 1–2 páginas', () => {
+    expect(hasFullPageImagePattern([0, 0.85, 0])).toBe(false);
+    expect(hasFullPageImagePattern([0, 0, 0.8, 0, 0, 0.9, 0, 0, 0, 0.75])).toBe(false);
+    expect(hasFullPageImagePattern([0.95, 0.95])).toBe(false);
+    expect(hasFullPageImagePattern([])).toBe(false);
   });
 });
 

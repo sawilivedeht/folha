@@ -9,7 +9,10 @@ export interface PdfPageLike {
   getViewport(params: { scale: number }): { width: number; height: number; transform: number[] };
   getTextContent(): Promise<{ items: unknown[]; styles: Record<string, { fontFamily?: string } | undefined> }>;
   getOperatorList(): Promise<{ fnArray: number[]; argsArray: unknown[] }>;
-  commonObjs?: { has(name: string): boolean; get(name: string): unknown };
+  commonObjs?: {
+    has(name: string): boolean;
+    get(name: string, callback?: (data: unknown) => void): unknown;
+  };
 }
 
 /** Subconjunto do `PDFDocumentProxy` usado aqui. */
@@ -36,7 +39,11 @@ export interface PdfOpsLike {
   paintFormXObjectEnd: number;
   paintImageXObject: number;
   paintInlineImageXObject: number;
+  paintImageMaskXObject?: number;
 }
+
+const FONT_WAIT_TIMEOUT_MS = 250;
+const MAX_TEXT_ROTATION_RAD = (30 * Math.PI) / 180;
 
 export function titleFromFileName(fileName: string): string {
   const base = fileName.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
@@ -171,15 +178,86 @@ export async function readPdfInfo(doc: PdfDocLike): Promise<{ title: string; aut
   return { title, author };
 }
 
-/** Extrai itens de texto em coordenadas top-down usando a matriz do viewport (trata rotação e CropBox). */
+export interface ExtractPageTextOptions {
+  /** Limite de espera (ms) pela resolução assíncrona das fontes em `commonObjs`. */
+  fontWaitTimeoutMs?: number;
+}
+
+/**
+ * Aguarda a resolução das fontes referenciadas em `commonObjs` com limite de tempo curto.
+ * No navegador, o pdf.js só registra `FontFaceObject` em `commonObjs` após `FontLoader.bind()`.
+ */
+export async function waitForPageFonts(
+  page: PdfPageLike,
+  fontNames: Iterable<string>,
+  timeoutMs: number = FONT_WAIT_TIMEOUT_MS,
+): Promise<void> {
+  const commonObjs = page.commonObjs;
+  if (!commonObjs || typeof commonObjs.has !== 'function' || typeof commonObjs.get !== 'function') return;
+
+  const pending: string[] = [];
+  const seen = new Set<string>();
+  for (const name of fontNames) {
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    let ready = false;
+    try {
+      ready = commonObjs.has(name);
+    } catch {
+      ready = true;
+    }
+    if (!ready) pending.push(name);
+  }
+  if (pending.length === 0) return;
+
+  await new Promise<void>((resolve) => {
+    let remaining = pending.length;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, Math.max(0, timeoutMs));
+
+    for (const name of pending) {
+      let doneForName = false;
+      const onReady = () => {
+        if (doneForName) return;
+        doneForName = true;
+        remaining--;
+        if (remaining <= 0) finish();
+      };
+      try {
+        const syncValue = commonObjs.get(name, onReady);
+        if (syncValue !== undefined && commonObjs.has(name)) {
+          onReady();
+        }
+      } catch {
+        onReady();
+      }
+    }
+  });
+}
+
+/** Extrai itens de texto horizontais em coordenadas top-down usando a matriz do viewport (trata rotação e CropBox). */
 export async function extractPageText(
   page: PdfPageLike,
   pageNumber: number,
+  options?: ExtractPageTextOptions,
 ): Promise<{ pageInput: PdfPageInput; charCount: number }> {
   const viewport = page.getViewport({ scale: 1 });
   const [va, vb, vc, vd, ve, vf] = viewport.transform;
   const content = await page.getTextContent();
   const styles = content.styles;
+
+  const fontNames = new Set<string>(Object.keys(styles ?? {}));
+  for (const rawItem of content.items) {
+    const fn = (rawItem as { fontName?: unknown }).fontName;
+    if (typeof fn === 'string' && fn) fontNames.add(fn);
+  }
+  await waitForPageFonts(page, fontNames, options?.fontWaitTimeoutMs);
 
   const items: PdfTextItem[] = [];
   let charCount = 0;
@@ -187,9 +265,17 @@ export async function extractPageText(
   for (const rawItem of content.items) {
     const raw = rawItem as { str?: string; transform: number[]; width: number; height: number; fontName: string };
     if (typeof raw.str !== 'string' || !raw.str) continue;
+    if (!Array.isArray(raw.transform) || raw.transform.length < 6) continue;
     const str = raw.str;
 
-    const [, , tc, td, te, tf] = raw.transform;
+    const [ta, tb, tc, td, te, tf] = raw.transform;
+    // Ignora texto vertical ou rotacionado (> 30° no viewport) para não misturá-lo às linhas horizontais.
+    const m0 = va * ta + vc * tb;
+    const m1 = vb * ta + vd * tb;
+    if (Math.hypot(m0, m1) > 1e-6 && Math.abs(Math.atan2(m1, m0)) > MAX_TEXT_ROTATION_RAD) {
+      continue;
+    }
+
     const x = va * te + vc * tf + ve;
     const y = vb * te + vd * tf + vf;
     const m2 = va * tc + vc * td;
@@ -253,7 +339,11 @@ export function imageAreaFraction(
     } else if (fn === ops.paintFormXObjectEnd) {
       const prev = stack.pop();
       if (prev) ctm = prev;
-    } else if (fn === ops.paintImageXObject || fn === ops.paintInlineImageXObject) {
+    } else if (
+      fn === ops.paintImageXObject ||
+      fn === ops.paintInlineImageXObject ||
+      (ops.paintImageMaskXObject !== undefined && fn === ops.paintImageMaskXObject)
+    ) {
       area += Math.abs(ctm[0] * ctm[3] - ctm[1] * ctm[2]);
     }
   }

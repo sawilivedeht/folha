@@ -14,7 +14,14 @@ import {
   type PdfDocLike,
   type PdfPageLike,
 } from './pdf-extract';
-import { buildSlideChapters, classifyPdf, shouldRenderPageImage, type PageStat, type SlideInput } from './pdf-slides';
+import {
+  buildSlideChapters,
+  classifyPdf,
+  hasFullPageImagePattern,
+  shouldRenderPageImage,
+  type PageStat,
+  type SlideInput,
+} from './pdf-slides';
 
 if (typeof workerUrl === 'string' && workerUrl.length > 0) {
   GlobalWorkerOptions.workerSrc = workerUrl;
@@ -31,6 +38,14 @@ const SLIDE_JPEG_QUALITY = 0.8;
 const SCAN_JPEG_QUALITY = 0.75;
 const SCANNED_PAGES_PER_CHAPTER = 20;
 
+/** Limite de lado e área do canvas para evitar estouro de textura/RAM no Android WebView. */
+export const MAX_CANVAS_SIDE = 2400;
+export const MAX_CANVAS_AREA = 3_000_000;
+/** Intervalo de páginas entre limpezas de cache/fontes do documento em PDFs longos. */
+export const DOC_CLEANUP_INTERVAL = 40;
+const MAX_PDF_IMAGE_PIXELS = 16_000_000;
+const BLANK_PROBE_MAX_SIDE = 48;
+
 function canRenderCanvas(): boolean {
   return typeof OffscreenCanvas !== 'undefined' || typeof document !== 'undefined';
 }
@@ -39,29 +54,140 @@ function formatPageImageKey(pageNumber: number): string {
   return `p${String(pageNumber).padStart(4, '0')}`;
 }
 
-/** Verifica rapidamente (amostragem em grade) se o canvas renderizado está praticamente todo branco. */
+function tryResolveBaseUrl(base: string, relative: string): string | null {
+  try {
+    const resolved = new URL(relative, base).href;
+    // Só usa URLs hierárquicas que o Web Worker pode buscar via fetch (evita about:blank).
+    if (/^(?:https?|capacitor|file):/i.test(resolved)) return resolved;
+  } catch {
+    // Base inválida ou não hierárquica.
+  }
+  return null;
+}
+
+/**
+ * URLs relativas à base do app (`base: './'`) para cmaps, fontes padrão e módulos WASM do pdf.js.
+ * Resolver contra a base da página garante que o Web Worker em `./assets/` encontre `./pdfjs/`.
+ */
+export function getPdfAssetUrls(baseUrl?: string): {
+  cMapUrl: string;
+  cMapPacked: true;
+  standardFontDataUrl: string;
+  wasmUrl: string;
+} {
+  const base =
+    baseUrl ??
+    (typeof document !== 'undefined' && document.baseURI
+      ? document.baseURI
+      : typeof location !== 'undefined' && location.href
+        ? location.href
+        : undefined);
+  const resolveDir = (dir: string): string => {
+    const rel = `./pdfjs/${dir}/`;
+    if (!base) return rel;
+    return tryResolveBaseUrl(base, rel) ?? rel;
+  };
+  return {
+    cMapUrl: resolveDir('cmaps'),
+    cMapPacked: true,
+    standardFontDataUrl: resolveDir('standard_fonts'),
+    wasmUrl: resolveDir('wasm'),
+  };
+}
+
+/** Calcula escala e dimensões do canvas respeitando os tetos de lado (`MAX_CANVAS_SIDE`) e área (`MAX_CANVAS_AREA`). */
+export function computeRenderSize(
+  baseWidth: number,
+  baseHeight: number,
+  targetWidth: number,
+): { scale: number; width: number; height: number } | null {
+  if (!(baseWidth > 0) || !(baseHeight > 0) || !(targetWidth > 0)) return null;
+  let scale = targetWidth / baseWidth;
+  const maxSideScale = MAX_CANVAS_SIDE / Math.max(baseWidth, baseHeight);
+  if (scale > maxSideScale) scale = maxSideScale;
+  const maxAreaScale = Math.sqrt(MAX_CANVAS_AREA / (baseWidth * baseHeight));
+  if (scale > maxAreaScale) scale = maxAreaScale;
+
+  let width = Math.max(1, Math.min(MAX_CANVAS_SIDE, Math.round(baseWidth * scale)));
+  let height = Math.max(1, Math.min(MAX_CANVAS_SIDE, Math.round(baseHeight * scale)));
+  if (width * height > MAX_CANVAS_AREA) {
+    width = Math.max(1, Math.min(MAX_CANVAS_SIDE, Math.floor(baseWidth * scale)));
+    height = Math.max(1, Math.min(MAX_CANVAS_SIDE, Math.floor(baseHeight * scale)));
+  }
+  return { scale, width, height };
+}
+
+function sampleProbePixels(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  probeW: number,
+  probeH: number,
+): ImageData['data'] | null {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const probe = new OffscreenCanvas(probeW, probeH);
+    try {
+      const ctx = probe.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, probeW, probeH);
+      ctx.drawImage(source, 0, 0, width, height, 0, 0, probeW, probeH);
+      return ctx.getImageData(0, 0, probeW, probeH).data;
+    } finally {
+      probe.width = 0;
+      probe.height = 0;
+    }
+  }
+  if (typeof document !== 'undefined') {
+    const probe = document.createElement('canvas');
+    probe.width = probeW;
+    probe.height = probeH;
+    try {
+      const ctx = probe.getContext('2d');
+      if (!ctx) return null;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, probeW, probeH);
+      ctx.drawImage(source, 0, 0, width, height, 0, 0, probeW, probeH);
+      return ctx.getImageData(0, 0, probeW, probeH).data;
+    } finally {
+      probe.width = 0;
+      probe.height = 0;
+    }
+  }
+  return null;
+}
+
+/** Verifica rapidamente se o canvas renderizado está praticamente todo branco via amostragem em miniatura. */
 function isCanvasMostlyBlank(
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  source: CanvasImageSource,
   width: number,
   height: number,
 ): boolean {
   try {
-    const sampleStepX = Math.max(1, Math.floor(width / 24));
-    const sampleStepY = Math.max(1, Math.floor(height / 24));
-    const data = ctx.getImageData(0, 0, width, height).data;
+    const scale = Math.min(1, BLANK_PROBE_MAX_SIDE / Math.max(width, height));
+    const probeW = Math.max(1, Math.round(width * scale));
+    const probeH = Math.max(1, Math.round(height * scale));
+    const data = sampleProbePixels(source, width, height, probeW, probeH);
+    if (!data) return false;
     let nonWhite = 0;
-    for (let y = 0; y < height; y += sampleStepY) {
-      for (let x = 0; x < width; x += sampleStepX) {
-        const idx = (y * width + x) * 4;
-        if (data[idx] < 245 || data[idx + 1] < 245 || data[idx + 2] < 245) {
-          nonWhite++;
-          if (nonWhite >= 4) return false;
-        }
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < 248 || data[i + 1] < 248 || data[i + 2] < 248) {
+        nonWhite++;
+        if (nonWhite >= 4) return false;
       }
     }
     return true;
   } catch {
     return false;
+  }
+}
+
+async function cleanupDoc(doc: PdfDoc): Promise<void> {
+  if (typeof doc.cleanup !== 'function') return;
+  try {
+    await doc.cleanup();
+  } catch {
+    // Limpeza periódica é apenas alívio de memória e não deve interromper a importação.
   }
 }
 
@@ -74,15 +200,43 @@ async function renderPageToJpeg(
   if (!canRenderCanvas()) return null;
 
   const baseViewport = page.getViewport({ scale: 1 });
-  if (baseViewport.width <= 0 || baseViewport.height <= 0) return null;
+  const sized = computeRenderSize(baseViewport.width, baseViewport.height, targetWidth);
+  if (!sized) return null;
 
-  const scale = targetWidth / baseViewport.width;
-  const viewport = page.getViewport({ scale });
-  const width = Math.max(1, Math.round(viewport.width));
-  const height = Math.max(1, Math.round(viewport.height));
+  const viewport = page.getViewport({ scale: sized.scale });
+  const { width, height } = sized;
 
   if (typeof OffscreenCanvas !== 'undefined') {
     const canvas = new OffscreenCanvas(width, height);
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      await page.render({
+        canvas: canvas as unknown as HTMLCanvasElement,
+        canvasContext: ctx as unknown as CanvasRenderingContext2D,
+        viewport,
+      }).promise;
+
+      if (skipIfBlank && isCanvasMostlyBlank(canvas, width, height)) {
+        return null;
+      }
+
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+      return { blob, w: width, h: height };
+    } finally {
+      canvas.width = 0;
+      canvas.height = 0;
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  try {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
@@ -90,57 +244,33 @@ async function renderPageToJpeg(
     ctx.fillRect(0, 0, width, height);
 
     await page.render({
-      canvas: canvas as unknown as HTMLCanvasElement,
-      canvasContext: ctx as unknown as CanvasRenderingContext2D,
+      canvas,
+      canvasContext: ctx,
       viewport,
     }).promise;
 
-    if (skipIfBlank && isCanvasMostlyBlank(ctx, width, height)) {
-      canvas.width = 0;
-      canvas.height = 0;
+    if (skipIfBlank && isCanvasMostlyBlank(canvas, width, height)) {
       return null;
     }
 
-    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
-    canvas.width = 0;
-    canvas.height = 0;
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Falha ao codificar imagem JPEG da página do PDF.'))),
+        'image/jpeg',
+        quality,
+      );
+    });
     return { blob, w: width, h: height };
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
-
-  await page.render({
-    canvas,
-    canvasContext: ctx,
-    viewport,
-  }).promise;
-
-  if (skipIfBlank && isCanvasMostlyBlank(ctx, width, height)) {
+  } finally {
     canvas.width = 0;
     canvas.height = 0;
-    return null;
   }
-
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new Error('Falha ao codificar imagem JPEG da página do PDF.'))),
-      'image/jpeg',
-      quality,
-    );
-  });
-  canvas.width = 0;
-  canvas.height = 0;
-  return { blob, w: width, h: height };
 }
 
-/** Converte um PDF (ArrayBuffer) em livro refluível (`ParsedBook`), ou em imagens se for escaneado ou apresentação. */
+/**
+ * Converte um PDF (ArrayBuffer) em livro refluível (`ParsedBook`), ou em imagens se for escaneado ou apresentação.
+ * Consome o `ArrayBuffer` diretamente (transferido ao Web Worker sem segunda cópia em memória).
+ */
 export async function parsePdf(
   data: ArrayBuffer,
   fileName: string,
@@ -148,8 +278,21 @@ export async function parsePdf(
 ): Promise<ParsedBook> {
   onProgress(0, 'Abrindo PDF...');
 
-  const copy = new Uint8Array(data.slice(0));
-  const loadingTask = getDocument({ data: copy });
+  const browserBase =
+    typeof document !== 'undefined' && document.baseURI
+      ? document.baseURI
+      : typeof location !== 'undefined' && location.href
+        ? location.href
+        : undefined;
+  const assetParams = browserBase && tryResolveBaseUrl(browserBase, './pdfjs/') ? getPdfAssetUrls(browserBase) : {};
+
+  const bytes = new Uint8Array(data);
+  const loadingTask = getDocument({
+    data: bytes,
+    ...assetParams,
+    maxImageSize: MAX_PDF_IMAGE_PIXELS,
+    canvasMaxAreaInBytes: MAX_CANVAS_AREA * 4,
+  });
   let doc: PdfDoc;
   try {
     doc = await loadingTask.promise;
@@ -207,6 +350,9 @@ export async function parsePdf(
       } finally {
         page.cleanup();
       }
+      if (i % DOC_CLEANUP_INTERVAL === 0 && i < numPages) {
+        await cleanupDoc(doc);
+      }
     }
 
     const stats: PageStat[] = pageInputs.map((p, idx) => ({
@@ -222,11 +368,13 @@ export async function parsePdf(
 
       if (canRenderCanvas()) {
         const blocksByChapter = new Map<number, Block[]>();
+        let failedPages = 0;
 
         for (let i = 1; i <= numPages; i++) {
           onProgress(0.85 + ((i - 1) / Math.max(1, numPages)) * 0.14, `Renderizando página ${i} de ${numPages}`);
-          const page = await doc.getPage(i);
+          let page: PdfPage | null = null;
           try {
+            page = await doc.getPage(i);
             const rendered = await renderPageToJpeg(page, SCAN_TARGET_WIDTH, SCAN_JPEG_QUALITY);
             if (rendered) {
               const key = formatPageImageKey(i);
@@ -245,9 +393,22 @@ export async function parsePdf(
                 h: rendered.h,
               });
             }
+          } catch {
+            failedPages++;
           } finally {
-            page.cleanup();
+            page?.cleanup();
           }
+          if (i % DOC_CLEANUP_INTERVAL === 0 && i < numPages) {
+            await cleanupDoc(doc);
+          }
+        }
+
+        if (failedPages > 0) {
+          warnings.push(
+            failedPages === 1
+              ? 'Não foi possível renderizar 1 página escaneada.'
+              : `Não foi possível renderizar ${failedPages} páginas escaneadas.`,
+          );
         }
 
         const totalChapters = Math.ceil(numPages / SCANNED_PAGES_PER_CHAPTER);
@@ -282,8 +443,9 @@ export async function parsePdf(
         onProgress(0.85 + (i / Math.max(1, numPages)) * 0.14, `Renderizando slide ${pageNum} de ${numPages}`);
         const slide: SlideInput = { pageNumber: pageNum, blocks: pageBlocks[i].blocks };
         if (canRenderCanvas()) {
-          const page = await doc.getPage(pageNum);
+          let page: PdfPage | null = null;
           try {
+            page = await doc.getPage(pageNum);
             const rendered = await renderPageToJpeg(page, SLIDE_TARGET_WIDTH, SLIDE_JPEG_QUALITY);
             if (rendered) {
               const key = formatPageImageKey(pageNum);
@@ -293,7 +455,10 @@ export async function parsePdf(
           } catch {
             // Falha em um slide não impede a importação: fica só o texto dele.
           } finally {
-            page.cleanup();
+            page?.cleanup();
+          }
+          if ((i + 1) % DOC_CLEANUP_INTERVAL === 0 && i + 1 < pageBlocks.length) {
+            await cleanupDoc(doc);
           }
         }
         slides.push(slide);
@@ -310,14 +475,30 @@ export async function parsePdf(
       };
     }
 
-    // Páginas sem texto, ou de texto com figura grande, ganham a imagem da página.
+    // Páginas sem texto, ou de texto com figura pontual grande, ganham a imagem da página.
+    // Quando quase todas as páginas de texto têm imagem inteira (camada OCR / fundo), não duplica em JPEG.
     if (canRenderCanvas()) {
+      const textPageCoverages = pageCoverage.filter((_, idx) => pageCharCounts[idx] >= 10);
+      const skipTextPageImages = hasFullPageImagePattern(textPageCoverages);
+      const imagePageIndices: number[] = [];
       for (let i = 0; i < pageInputs.length; i++) {
         const noText = pageCharCounts[i] < 10;
-        if (!noText && !shouldRenderPageImage(pageCoverage[i])) continue;
+        if (noText || (!skipTextPageImages && shouldRenderPageImage(pageCoverage[i]))) {
+          imagePageIndices.push(i);
+        }
+      }
+
+      for (let k = 0; k < imagePageIndices.length; k++) {
+        const i = imagePageIndices[k];
+        const noText = pageCharCounts[i] < 10;
         const pageNum = pageInputs[i].pageNumber;
-        const page = await doc.getPage(pageNum);
+        onProgress(
+          0.85 + (k / Math.max(1, imagePageIndices.length)) * 0.1,
+          `Renderizando imagem ${k + 1} de ${imagePageIndices.length}`,
+        );
+        let page: PdfPage | null = null;
         try {
+          page = await doc.getPage(pageNum);
           const rendered = await renderPageToJpeg(page, SCAN_TARGET_WIDTH, SCAN_JPEG_QUALITY, noText);
           if (rendered) {
             const key = formatPageImageKey(pageNum);
@@ -332,7 +513,10 @@ export async function parsePdf(
         } catch {
           // Ignora falha ao renderizar página isolada.
         } finally {
-          page.cleanup();
+          page?.cleanup();
+        }
+        if ((k + 1) % DOC_CLEANUP_INTERVAL === 0 && k + 1 < imagePageIndices.length) {
+          await cleanupDoc(doc);
         }
       }
     }

@@ -2,7 +2,7 @@
 // Helvetica/Times usam WinAnsi, que cobre os acentos do português.
 import { createHash } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, StandardFonts, degrees, rgb } from 'pdf-lib';
 
 export interface Fonts {
   regular: PDFFont;
@@ -290,6 +290,57 @@ export async function buildTextWithFigurePdf(): Promise<Uint8Array> {
     }
     if (p === 1) page.drawImage(png, { x: 20, y: 20, width: 380, height: 555, opacity: 0.4 });
   }
+  return doc.save();
+}
+
+/** PDF escaneado com camada de texto OCR: todas as páginas têm imagem inteira e texto abundante. */
+export async function buildOcrPdf(pages: number): Promise<Uint8Array> {
+  const { doc, fonts } = await newDoc();
+  const png = await doc.embedPng(solidPng(8, 8, [230, 225, 215]));
+  const body =
+    'Este livro digitalizado recebeu reconhecimento óptico de caracteres em todas as páginas, ' +
+    'mantendo a imagem escaneada de página inteira atrás da camada de texto pesquisável.';
+  for (let p = 0; p < pages; p++) {
+    const page = doc.addPage([420, 595]);
+    page.drawImage(png, { x: 0, y: 0, width: 420, height: 595 });
+    let y = 540;
+    for (const ln of wrapText(body.repeat(6), fonts.regular, 11, 310)) {
+      if (y < 60) break;
+      page.drawText(ln, { x: 55, y, size: 11, font: fonts.regular });
+      y -= 16;
+    }
+  }
+  return doc.save();
+}
+
+/** PDF com texto horizontal normal e selos rotacionados (90° na margem esquerda e 180° invertido). */
+export async function buildRotatedStampPdf(): Promise<Uint8Array> {
+  const { doc, fonts } = await newDoc();
+  const page = doc.addPage([595, 842]);
+  const lines = [
+    'Primeira linha do artigo científico com texto horizontal normal e legível.',
+    'Segunda linha do artigo que não pode ser misturada ao selo vertical da margem.',
+    'Terceira linha completa o parágrafo para garantir extração limpa no leitor.',
+  ];
+  let y = 600;
+  for (const ln of lines) {
+    page.drawText(ln, { x: 80, y, size: 12, font: fonts.regular });
+    y -= 20;
+  }
+  page.drawText('arXiv:2401.12345v1 [cs.CL] 15 Jan 2024', {
+    x: 25,
+    y: 450,
+    size: 11,
+    font: fonts.regular,
+    rotate: degrees(90),
+  });
+  page.drawText('TEXTO INVERTIDO 180', {
+    x: 400,
+    y: 580,
+    size: 12,
+    font: fonts.regular,
+    rotate: degrees(180),
+  });
   return doc.save();
 }
 

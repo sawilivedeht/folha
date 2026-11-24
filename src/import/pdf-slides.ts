@@ -2,7 +2,7 @@
 // Sem dependências de pdfjs-dist ou DOM. Compatível com `node --experimental-strip-types`.
 import type { Block, Chapter } from '../types';
 
-/** Mediana de caracteres por página abaixo da qual o PDF é tratado como apresentação. */
+/** Mediana de caracteres por página usada como referência histórica para slides. */
 export const SLIDE_MEDIAN_CHARS = 400;
 /** Fração mínima de páginas em paisagem para considerar o formato de slide. */
 export const SLIDE_LANDSCAPE_RATIO = 0.7;
@@ -10,6 +10,12 @@ export const SLIDE_LANDSCAPE_RATIO = 0.7;
 export const SLIDE_LANDSCAPE_MEDIAN_CHARS = 1200;
 /** Fração da página coberta por imagem a partir da qual a página também ganha o bloco `img`. */
 export const IMAGE_COVERAGE_THRESHOLD = 0.4;
+/** Cobertura mínima de imagem para considerar imagem de página inteira (scan com OCR ou fundo). */
+export const OCR_IMAGE_COVERAGE_THRESHOLD = 0.75;
+/** Fração mínima de páginas de texto com imagem quase inteira para detectar camada OCR/fundo. */
+export const OCR_PAGES_RATIO_THRESHOLD = 0.7;
+/** Mínimo de páginas de texto para detectar padrão de OCR/fundo sem afetar documentos curtos. */
+export const OCR_MIN_TEXT_PAGES = 3;
 export const SLIDES_PER_CHAPTER = 10;
 
 export interface PageStat {
@@ -33,18 +39,30 @@ export function median(values: number[]): number {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** Decide se o PDF é uma apresentação: páginas com pouco texto, ou em paisagem com texto moderado. */
+/** Decide se o PDF é uma apresentação: maioria das páginas em paisagem e mediana de texto moderada. */
 export function isSlideDeck(stats: PageStat[]): boolean {
   if (stats.length < 2) return false;
-  const med = median(stats.map((s) => s.chars));
   const landscape = stats.filter((s) => s.width > s.height * 1.2).length / stats.length;
-  if (med < SLIDE_MEDIAN_CHARS) return true;
-  return landscape >= SLIDE_LANDSCAPE_RATIO && med < SLIDE_LANDSCAPE_MEDIAN_CHARS;
+  if (landscape < SLIDE_LANDSCAPE_RATIO) return false;
+  // Usa apenas páginas com texto na mediana para evitar classificar PDFs mistos como slides.
+  const textChars = stats.filter((s) => s.chars >= SCANNED_CHARS_THRESHOLD).map((s) => s.chars);
+  if (textChars.length === 0) return false;
+  return median(textChars) < SLIDE_LANDSCAPE_MEDIAN_CHARS;
 }
 
 /** Página de texto com figura grande: também deve ganhar o bloco `img` da página. */
 export function shouldRenderPageImage(imageCoverage: number): boolean {
   return imageCoverage > IMAGE_COVERAGE_THRESHOLD;
+}
+
+/**
+ * Detecta padrão de PDF escaneado com camada OCR (ou imagem de fundo repetida):
+ * maioria das páginas de texto tem imagem cobrindo quase toda a página.
+ */
+export function hasFullPageImagePattern(textPageCoverages: number[]): boolean {
+  if (textPageCoverages.length < OCR_MIN_TEXT_PAGES) return false;
+  const fullPages = textPageCoverages.filter((c) => c >= OCR_IMAGE_COVERAGE_THRESHOLD).length;
+  return fullPages / textPageCoverages.length >= OCR_PAGES_RATIO_THRESHOLD;
 }
 
 export interface SlideInput {

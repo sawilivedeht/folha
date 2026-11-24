@@ -116,13 +116,34 @@ export async function importFileWithWarnings(
   onProgress: ProgressFn,
 ): Promise<ImportResult> {
   onProgress(0, 'Lendo arquivo...');
-  const buffer = await file.arrayBuffer();
-  const headerBytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 512));
-  const format = detectFormat(headerBytes, file.name);
+
+  // Lê só o cabeçalho antes de carregar o arquivo inteiro, evitando reter referência ao ArrayBuffer.
+  let fallbackBuffer: ArrayBuffer | null = null;
+  let format: BookFormat | null;
+  {
+    let headerBytes: Uint8Array;
+    if (typeof file.slice === 'function') {
+      headerBytes = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+    } else {
+      fallbackBuffer = await file.arrayBuffer();
+      headerBytes = new Uint8Array(fallbackBuffer, 0, Math.min(fallbackBuffer.byteLength, 512));
+    }
+    format = detectFormat(headerBytes, file.name);
+  }
 
   if (!format) {
+    fallbackBuffer = null;
     throw new Error('Formato não suportado. Use arquivos PDF, EPUB, TXT ou MD.');
   }
+
+  const takeBuffer = async (): Promise<ArrayBuffer> => {
+    if (fallbackBuffer) {
+      const buf = fallbackBuffer;
+      fallbackBuffer = null;
+      return buf;
+    }
+    return file.arrayBuffer();
+  };
 
   const subProgress: ProgressFn = (fraction, label) => {
     const clamped = Math.max(0, Math.min(1, fraction));
@@ -132,12 +153,13 @@ export async function importFileWithWarnings(
   let parsed: ParsedBook;
   if (format === 'pdf') {
     const { parsePdf } = await import('./pdf');
-    parsed = await parsePdf(buffer, file.name, subProgress);
+    parsed = await parsePdf(await takeBuffer(), file.name, subProgress);
   } else if (format === 'epub') {
     const { parseEpub } = await import('./epub');
-    parsed = await parseEpub(buffer, file.name, subProgress);
+    parsed = await parseEpub(await takeBuffer(), file.name, subProgress);
   } else {
     const { parseTxt, decodeText } = await import('./txt');
+    const buffer = await takeBuffer();
     subProgress(0.3, 'Decodificando texto...');
     const text = decodeText(buffer);
     subProgress(0.7, 'Organizando capítulos...');
