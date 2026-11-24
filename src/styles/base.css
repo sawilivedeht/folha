@@ -1,0 +1,80 @@
+/* Tokens de tema. O leitor e a biblioteca usam só estas variáveis. */
+:root,
+:root[data-theme='light'] {
+  --bg: #f7f3ea;
+  --fg: #1d1b18;
+  --muted: #6b655c;
+  --surface: #ffffff;
+  --line: #e2dccf;
+  --accent: #9a5b13;
+  --accent-fg: #ffffff;
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  color-scheme: light;
+}
+:root[data-theme='sepia'] {
+  --bg: #f1e5cc;
+  --fg: #3b2f22;
+  --muted: #7a6a55;
+  --surface: #f8efdc;
+  --line: #ddcba8;
+  --accent: #8a4f12;
+  --accent-fg: #ffffff;
+  --shadow: 0 1px 3px rgb(60 40 10 / 0.18);
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  --bg: #1e1f22;
+  --fg: #d9d6cf;
+  --muted: #9a968d;
+  --surface: #2a2b2f;
+  --line: #3a3b40;
+  --accent: #e0a458;
+  --accent-fg: #1e1f22;
+  --shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+:root[data-theme='black'] {
+  --bg: #000000;
+  --fg: #c8c5bd;
+  --muted: #8a867e;
+  --surface: #121212;
+  --line: #262626;
+  --accent: #d6995a;
+  --accent-fg: #000000;
+  --shadow: none;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, Roboto, 'Noto Sans', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+#app {
+  height: 100%;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
