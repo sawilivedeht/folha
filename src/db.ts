@@ -71,7 +71,8 @@ export async function saveBook(meta: BookMeta, content: BookContent, blobs: Map<
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(['meta', 'content', 'blobs'], 'readwrite');
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    // No evento error da transação, tx.error ainda é null: o erro real está na requisição que falhou.
+    tx.onerror = (e) => reject((e.target as IDBRequest | null)?.error ?? tx.error);
     tx.onabort = () => reject(tx.error ?? new DOMException('Gravação cancelada.', 'AbortError'));
     try {
       tx.objectStore('meta').put(meta, meta.id);
@@ -97,9 +98,9 @@ export async function deleteBook(id: string): Promise<void> {
     const tx = db.transaction(['meta', 'content', 'blobs'], 'readwrite');
     tx.objectStore('meta').delete(id);
     tx.objectStore('content').delete(id);
-    tx.objectStore('blobs').delete(IDBKeyRange.bound(`${id}/`, `${id}/￿`));
+    tx.objectStore('blobs').delete(IDBKeyRange.bound(`${id}/`, `${id}/\uffff`));
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = (e) => reject((e.target as IDBRequest | null)?.error ?? tx.error);
     tx.onabort = () => reject(tx.error ?? new DOMException('Exclusão cancelada.', 'AbortError'));
   });
 }

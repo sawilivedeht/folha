@@ -6,6 +6,7 @@ android/build/
 *.apk
 .DS_Store
 .alethe/
+.claude/worktrees/
 
 # Assinatura de release do Android
 keystore.properties
