@@ -22,9 +22,6 @@ test.describe('Acessibilidade (axe-core)', () => {
 
   for (const tema of TEMAS) {
     test(`estante com livros, tema ${tema}`, async ({ page }) => {
-      // BUG: --muted do tema sépia (#7a6a55 sobre #f1e5cc) tem contraste 4,18:1 (< 4,5:1); o token fica em src/styles/base.css.
-      // Correção sugerida: --muted: #6b5b46 em :root[data-theme='sepia'].
-      test.fail(tema === 'sepia', 'contraste do token --muted do tema sépia (base.css)');
       await abrirEstante(page);
       await importarEFechar(page, ['epub3.epub', 'epub2.epub', 'texto.pdf']);
       await page.evaluate((t) => (document.documentElement.dataset.theme = t), tema);
