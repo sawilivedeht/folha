@@ -91,9 +91,7 @@ test.describe('Armazenamento indisponível', () => {
     expect(excecoes).toEqual([]);
   });
 
-  // BUG: src/library/index.ts (`void refreshBooks()` e importação) não trata a rejeição de listBooks quando o
-  // IndexedDB falha: exceção não tratada e nenhuma mensagem ao usuário (a estante parece vazia, sem aviso).
-  test.fail('IndexedDB.open falhando: a estante avisa o problema, sem exceção não tratada', async ({ page, excecoes }) => {
+  test('IndexedDB.open falhando: a estante avisa o problema, sem exceção não tratada', async ({ page, excecoes }) => {
     await page.addInitScript(bloquearIndexedDB);
     await page.goto('/');
     await expect(page.locator('.lib-page')).toBeVisible();

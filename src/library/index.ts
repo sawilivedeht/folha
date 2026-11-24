@@ -136,7 +136,29 @@ function createProgressRow(book: BookMeta): HTMLElement {
   return row;
 }
 
-export function mountLibrary(root: HTMLElement): () => void {
+export interface LibraryHandle {
+  unmount: () => void;
+  /** Trata o botão Voltar do Android. Retorna true quando a estante consumiu o evento (não sai do app). */
+  handleBack: () => boolean;
+}
+
+function isQuotaError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED';
+}
+
+function formatImportError(err: unknown): string {
+  if (isQuotaError(err)) {
+    return 'Armazenamento cheio. Libere espaço excluindo livros antigos e tente novamente.';
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return 'Não foi possível importar este arquivo.';
+}
+
+export function mountLibrary(root: HTMLElement): LibraryHandle {
   let disposed = false;
   let books: BookMeta[] = [];
   let sortMode: SortMode = 'recent';
@@ -145,8 +167,9 @@ export function mountLibrary(root: HTMLElement): () => void {
   let dragDepth = 0;
   let longPressTimer: number | null = null;
   // Após um toque longo, o dedo ainda está sobre o menu recém-aberto: o "click" do soltar cairia no fundo (fechando o menu)
-  // ou num item do menu (acionando-o sem querer). Esse primeiro clique é descartado.
+  // ou num item do menu (acionando-o sem querer). Esse primeiro clique de ponteiro é descartado.
   let swallowNextModalClick = false;
+  let swallowTimer: number | null = null;
   let observer: IntersectionObserver | null = null;
   const gridObjectUrls: string[] = [];
   let continueObjectUrl: string | null = null;
@@ -177,15 +200,33 @@ export function mountLibrary(root: HTMLElement): () => void {
 
   const main = el('main', 'lib-main');
   const modalLayer = el('div');
-  // Um novo toque depois do menu aberto por toque longo é uma interação deliberada: para de descartar cliques.
-  modalLayer.addEventListener('pointerdown', () => {
+
+  function clearSwallowModalClick(): void {
     swallowNextModalClick = false;
-  });
+    if (swallowTimer !== null) {
+      window.clearTimeout(swallowTimer);
+      swallowTimer = null;
+    }
+  }
+
+  function scheduleSwallowExpiry(): void {
+    if (!swallowNextModalClick) return;
+    if (swallowTimer !== null) window.clearTimeout(swallowTimer);
+    swallowTimer = window.setTimeout(() => {
+      swallowTimer = null;
+      swallowNextModalClick = false;
+    }, 400);
+  }
+
+  // Uma interação deliberada (novo toque ou teclado) encerra imediatamente o descarte de cliques.
+  modalLayer.addEventListener('pointerdown', clearSwallowModalClick);
+  modalLayer.addEventListener('keydown', clearSwallowModalClick);
   modalLayer.addEventListener(
     'click',
     (e) => {
-      if (!swallowNextModalClick) return;
-      swallowNextModalClick = false;
+      // Cliques acionados por teclado (Enter/Espaço) têm detail === 0 e nunca devem ser descartados.
+      if (!swallowNextModalClick || e.detail === 0) return;
+      clearSwallowModalClick();
       e.stopPropagation();
       e.preventDefault();
     },
@@ -223,6 +264,7 @@ export function mountLibrary(root: HTMLElement): () => void {
   }
 
   function closeModal(): void {
+    clearSwallowModalClick();
     modalLayer.replaceChildren();
   }
 
@@ -248,9 +290,14 @@ export function mountLibrary(root: HTMLElement): () => void {
     const idx = THEME_ORDER.indexOf(settings.theme);
     const nextTheme = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
     const updated = { ...settings, theme: nextTheme };
-    await saveSettings(updated);
+    try {
+      await saveSettings(updated);
+    } catch {
+      // Aplica o tema na sessão atual mesmo quando o armazenamento está indisponível.
+    }
+    if (disposed) return;
     applyTheme(nextTheme);
-    if (!disposed) syncThemeButton(nextTheme);
+    syncThemeButton(nextTheme);
   });
 
   importBtn.addEventListener('click', openPicker);
@@ -266,6 +313,10 @@ export function mountLibrary(root: HTMLElement): () => void {
     let startY = 0;
 
     card.addEventListener('pointerdown', (e) => {
+      if (!e.isPrimary) {
+        clearLongPress();
+        return;
+      }
       if (e.button !== 0) return;
       suppressClick = false;
       startX = e.clientX;
@@ -280,7 +331,7 @@ export function mountLibrary(root: HTMLElement): () => void {
     });
 
     card.addEventListener('pointermove', (e) => {
-      if (longPressTimer === null) return;
+      if (longPressTimer === null || !e.isPrimary) return;
       if (Math.hypot(e.clientX - startX, e.clientY - startY) > 10) {
         clearLongPress();
       }
@@ -288,6 +339,8 @@ export function mountLibrary(root: HTMLElement): () => void {
 
     card.addEventListener('pointerup', clearLongPress);
     card.addEventListener('pointercancel', clearLongPress);
+    card.addEventListener('pointerleave', clearLongPress);
+    card.addEventListener('contextmenu', (e) => e.preventDefault());
 
     card.addEventListener('click', () => {
       if (suppressClick) {
@@ -298,6 +351,8 @@ export function mountLibrary(root: HTMLElement): () => void {
     });
 
     card.addEventListener('keydown', (e) => {
+      // Ignora teclas disparadas em controles filhos (como o botão "⋯" de opções).
+      if (e.target !== card) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         openBook(book.id);
@@ -342,6 +397,7 @@ export function mountLibrary(root: HTMLElement): () => void {
       img.src = url;
       img.alt = '';
       img.decoding = 'async';
+      img.draggable = false;
       container.replaceChildren(img);
     } catch {
       // Mantém a capa gerada se falhar a leitura do blob.
@@ -374,9 +430,9 @@ export function mountLibrary(root: HTMLElement): () => void {
   }
 
   function buildContinueCard(book: BookMeta): HTMLElement {
-    const card = el('div', 'lib-continue-card');
+    // Usa <article> em vez de role="button" para não aninhar o botão "⋯" em outro controle interativo.
+    const card = el('article', 'lib-continue-card');
     card.tabIndex = 0;
-    card.setAttribute('role', 'button');
 
     const coverWrap = el('div', 'lib-continue-cover');
     createCoverElement(book, coverWrap);
@@ -432,9 +488,17 @@ export function mountLibrary(root: HTMLElement): () => void {
     if (sortMode === 'title') {
       filtered.sort((a, b) => a.title.localeCompare(b.title, 'pt-BR', { sensitivity: 'base' }));
     } else if (sortMode === 'author') {
-      filtered.sort((a, b) =>
-        (a.author ?? '').localeCompare(b.author ?? '', 'pt-BR', { sensitivity: 'base' }),
-      );
+      filtered.sort((a, b) => {
+        const authorA = (a.author ?? '').trim();
+        const authorB = (b.author ?? '').trim();
+        if (!authorA && !authorB) {
+          return a.title.localeCompare(b.title, 'pt-BR', { sensitivity: 'base' });
+        }
+        if (!authorA) return 1;
+        if (!authorB) return -1;
+        const cmp = authorA.localeCompare(authorB, 'pt-BR', { sensitivity: 'base' });
+        return cmp !== 0 ? cmp : a.title.localeCompare(b.title, 'pt-BR', { sensitivity: 'base' });
+      });
     } else {
       filtered.sort((a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt));
     }
@@ -445,6 +509,11 @@ export function mountLibrary(root: HTMLElement): () => void {
   function renderBooks(): void {
     revokeAllCovers();
     main.replaceChildren();
+
+    // Sem o campo de busca (<= 8 livros), não há como o usuário limpar o filtro: zera a busca.
+    if (books.length <= 8) {
+      searchQuery = '';
+    }
 
     if (books.length === 0) {
       const empty = el('section', 'lib-empty');
@@ -535,7 +604,7 @@ export function mountLibrary(root: HTMLElement): () => void {
     observeCovers();
   }
 
-  function showModal(content: HTMLElement, closeOnBackdrop = true): void {
+  function showModal(content: HTMLElement, closeOnBackdrop: boolean | (() => boolean) = true): void {
     const backdrop = el('div', 'lib-backdrop');
     const modal = el('div', 'lib-modal');
     modal.setAttribute('role', 'dialog');
@@ -543,11 +612,11 @@ export function mountLibrary(root: HTMLElement): () => void {
     modal.append(content);
     backdrop.append(modal);
 
-    if (closeOnBackdrop) {
-      backdrop.addEventListener('click', (e) => {
-        if (e.target === backdrop) closeModal();
-      });
-    }
+    backdrop.addEventListener('click', (e) => {
+      if (e.target !== backdrop) return;
+      const canClose = typeof closeOnBackdrop === 'function' ? closeOnBackdrop() : closeOnBackdrop;
+      if (canClose) closeModal();
+    });
 
     modalLayer.replaceChildren(backdrop);
   }
@@ -634,11 +703,26 @@ export function mountLibrary(root: HTMLElement): () => void {
     cancelBtn.type = 'button';
     cancelBtn.addEventListener('click', closeModal);
 
+    let errEl: HTMLElement | null = null;
+
     const confirmBtn = el('button', 'lib-btn lib-btn-danger', 'Excluir');
     confirmBtn.type = 'button';
     confirmBtn.addEventListener('click', async () => {
       confirmBtn.disabled = true;
-      await deleteBook(book.id);
+      if (errEl) {
+        errEl.remove();
+        errEl = null;
+      }
+      try {
+        await deleteBook(book.id);
+      } catch {
+        if (disposed) return;
+        errEl = el('p', 'lib-modal-error', 'Não foi possível excluir o livro. Tente novamente.');
+        errEl.setAttribute('role', 'alert');
+        box.insertBefore(errEl, actions);
+        confirmBtn.disabled = false;
+        return;
+      }
       try {
         localStorage.removeItem(positionStashKey(book.id));
       } catch {
@@ -672,7 +756,7 @@ export function mountLibrary(root: HTMLElement): () => void {
     bar.append(fill);
 
     box.append(titleEl, fileEl, bar, statusEl);
-    showModal(box, false);
+    showModal(box, () => !importing);
 
     const allWarnings: string[] = [];
     let hadError = false;
@@ -697,8 +781,7 @@ export function mountLibrary(root: HTMLElement): () => void {
         }
       } catch (err) {
         hadError = true;
-        const message =
-          err instanceof Error ? err.message : 'Não foi possível importar este arquivo.';
+        const message = formatImportError(err);
         const errEl = el('p', 'lib-modal-error', `${file.name}: ${message}`);
         box.append(errEl);
       }
@@ -716,6 +799,7 @@ export function mountLibrary(root: HTMLElement): () => void {
     }
 
     titleEl.textContent = hadError ? 'Importação com erro' : 'Importação concluída';
+    fileEl.hidden = true;
     bar.hidden = true;
     statusEl.hidden = true;
 
@@ -736,11 +820,38 @@ export function mountLibrary(root: HTMLElement): () => void {
     box.append(actions);
   }
 
+  function renderLoadError(): void {
+    revokeAllCovers();
+    main.replaceChildren();
+    const box = el('section', 'lib-empty');
+    box.setAttribute('role', 'alert');
+    box.append(
+      el('h2', 'lib-empty-title', 'Não foi possível acessar o armazenamento'),
+      el(
+        'p',
+        'lib-empty-sub',
+        'O navegador bloqueou ou não conseguiu abrir o banco de dados local. Verifique se o modo privado está ativo ou se há espaço livre.',
+      ),
+    );
+    const retryBtn = el('button', 'lib-btn lib-btn-primary', 'Tentar novamente');
+    retryBtn.type = 'button';
+    retryBtn.addEventListener('click', () => {
+      void refreshBooks();
+    });
+    box.append(retryBtn);
+    main.append(box);
+  }
+
   async function refreshBooks(): Promise<void> {
-    const loaded = await listBooks();
-    if (disposed) return;
-    books = loaded;
-    renderBooks();
+    try {
+      const loaded = await listBooks();
+      if (disposed) return;
+      books = loaded;
+      renderBooks();
+    } catch {
+      if (disposed) return;
+      renderLoadError();
+    }
   }
 
   function onDragEnter(e: DragEvent): void {
@@ -775,22 +886,39 @@ export function mountLibrary(root: HTMLElement): () => void {
     }
   }
 
+  function handleBack(): boolean {
+    if (disposed) return false;
+    if (importing) return true;
+    if (modalLayer.childElementCount > 0) {
+      closeModal();
+      return true;
+    }
+    return false;
+  }
+
   window.addEventListener('dragenter', onDragEnter);
   window.addEventListener('dragover', onDragOver);
   window.addEventListener('dragleave', onDragLeave);
   window.addEventListener('drop', onDrop);
   window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('pointerup', scheduleSwallowExpiry);
+  window.addEventListener('pointercancel', scheduleSwallowExpiry);
 
   void refreshBooks();
 
-  return () => {
+  const unmount = (): void => {
     disposed = true;
     clearLongPress();
+    clearSwallowModalClick();
     revokeAllCovers();
     window.removeEventListener('dragenter', onDragEnter);
     window.removeEventListener('dragover', onDragOver);
     window.removeEventListener('dragleave', onDragLeave);
     window.removeEventListener('drop', onDrop);
     window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('pointerup', scheduleSwallowExpiry);
+    window.removeEventListener('pointercancel', scheduleSwallowExpiry);
   };
+
+  return { unmount, handleBack };
 }

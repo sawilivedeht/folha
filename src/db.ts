@@ -11,18 +11,48 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 
 function open(): Promise<IDBDatabase> {
   if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
+    const opening = new Promise<IDBDatabase>((resolve, reject) => {
+      let settled = false;
       const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
+      req.onupgradeneeded = (e) => {
         const db = req.result;
-        for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+        if (e.oldVersion < 1) {
+          for (const s of STORES) if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+        }
       };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      req.onblocked = () => {
+        if (settled) return;
+        settled = true;
+        reject(new DOMException('Banco de dados bloqueado por outra aba ou janela.', 'AbortError'));
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (settled) {
+          db.close();
+          return;
+        }
+        settled = true;
+        const invalidate = () => {
+          if (dbPromise === opening) dbPromise = null;
+        };
+        // Fecha a conexão quando outra aba atualiza o esquema e descarta o cache se o navegador fechar o banco.
+        db.onversionchange = () => {
+          invalidate();
+          db.close();
+        };
+        db.onclose = invalidate;
+        resolve(db);
+      };
+      req.onerror = () => {
+        if (settled) return;
+        settled = true;
+        reject(req.error);
+      };
     });
+    dbPromise = opening;
     // Uma abertura que falhou não pode ficar em cache: a próxima chamada tenta de novo.
-    dbPromise.catch(() => {
-      dbPromise = null;
+    opening.catch(() => {
+      if (dbPromise === opening) dbPromise = null;
     });
     // Pede armazenamento persistente para o Android não apagar a biblioteca sob pressão de espaço.
     navigator.storage?.persist?.().catch(() => {});
@@ -96,12 +126,21 @@ export async function deleteBook(id: string): Promise<void> {
   const db = await open();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(['meta', 'content', 'blobs'], 'readwrite');
-    tx.objectStore('meta').delete(id);
-    tx.objectStore('content').delete(id);
-    tx.objectStore('blobs').delete(IDBKeyRange.bound(`${id}/`, `${id}/\uffff`));
     tx.oncomplete = () => resolve();
     tx.onerror = (e) => reject((e.target as IDBRequest | null)?.error ?? tx.error);
     tx.onabort = () => reject(tx.error ?? new DOMException('Exclusão cancelada.', 'AbortError'));
+    try {
+      tx.objectStore('meta').delete(id);
+      tx.objectStore('content').delete(id);
+      tx.objectStore('blobs').delete(IDBKeyRange.bound(`${id}/`, `${id}/\uffff`));
+    } catch (err) {
+      try {
+        tx.abort();
+      } catch {
+        // transação já encerrada
+      }
+      reject(err);
+    }
   });
 }
 
