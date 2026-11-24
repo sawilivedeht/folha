@@ -58,7 +58,7 @@ jobs:
       - name: Compilar APK debug e release (R8) e rodar lint
         working-directory: android
         run: ./gradlew assembleDebug assembleRelease lint
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: folha-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
