@@ -396,7 +396,7 @@ describe('parsePdf: URLs de cmaps, fontes padrão e WASM (achado 11)', () => {
     });
   });
 
-  it('passa wasmUrl, cMapUrl (cMapPacked), standardFontDataUrl e limites de imagem ao getDocument no navegador', async () => {
+  it('passa wasmUrl, useWasm: false, cMapUrl (cMapPacked), standardFontDataUrl e limites de imagem ao getDocument no navegador', async () => {
     vi.stubGlobal('location', { href: 'https://localhost/index.html' });
     const { loadingTask } = makeFakeLoadingTask([{ chars: 600 }]);
     getDocumentSpy.mockImplementationOnce(() => loadingTask);
@@ -407,6 +407,8 @@ describe('parsePdf: URLs de cmaps, fontes padrão e WASM (achado 11)', () => {
     expect(params.cMapPacked).toBe(true);
     expect(params.standardFontDataUrl).toBe('https://localhost/pdfjs/standard_fonts/');
     expect(params.wasmUrl).toBe('https://localhost/pdfjs/wasm/');
+    // O F-Droid rejeita os .wasm pré-compilados; o build nem os copia (vite.config.ts).
+    expect(params.useWasm).toBe(false);
     expect(params.maxImageSize).toBeGreaterThan(0);
     expect(params.canvasMaxAreaInBytes).toBe(MAX_CANVAS_AREA * 4);
   });

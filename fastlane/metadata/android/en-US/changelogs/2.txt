@@ -1,0 +1,4 @@
+First release on F-Droid.
+• The app no longer requests internet access, and cloud backup is disabled.
+• PDFs open again on older Android WebViews.
+• Accessibility fixes, plus fixes to EPUB and TXT import and PDF conversion.

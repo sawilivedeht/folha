@@ -1,0 +1,19 @@
+Folha is an e-book reader for people who just want to read: no account, no ads and no tracking. Your books stay on your device.
+
+The interface is in Brazilian Portuguese.
+
+Formats
+• EPUB and TXT/Markdown.
+• PDF, converted into reflowable text that fits the screen. Scanned PDFs become one image per page, as there is no OCR.
+
+Reading
+• Turn pages by tapping, swiping or with the keyboard, with a progress bar and the time left in the chapter.
+• Aa panel: font size, line spacing, margins, font family, justification and hyphenation.
+• Light, sepia, dark and black themes.
+• Table of contents, bookmarks and automatically saved progress.
+
+Privacy
+• Works fully offline: the app requests no permissions, not even internet access.
+• Android cloud backup is disabled, so your library never leaves the device.
+
+Open source under the MIT license.

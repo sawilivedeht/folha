@@ -1,0 +1,17 @@
+Folha é um leitor de e-books para quem quer só ler: sem conta, sem anúncios e sem rastreamento. Seus livros ficam guardados no próprio aparelho.
+
+Formatos
+• EPUB e TXT/Markdown.
+• PDF, convertido em texto refluível que se ajusta à tela. PDFs escaneados viram uma imagem por página, pois não há OCR.
+
+Leitura
+• Páginas viradas por toque, deslize ou teclado, com barra de progresso e tempo restante no capítulo.
+• Painel Aa: tamanho da fonte, entrelinha, margens, família da fonte, justificação e hifenização.
+• Temas claro, sépia, escuro e preto.
+• Sumário, marcadores e progresso salvo automaticamente.
+
+Privacidade
+• Funciona totalmente offline: o app não pede nenhuma permissão, nem a de internet.
+• O backup em nuvem do Android fica desligado, para a biblioteca não sair do aparelho.
+
+Código aberto sob a licença MIT.

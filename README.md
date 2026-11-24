@@ -65,6 +65,16 @@ Com o arquivo presente, `./gradlew assembleRelease` assina o APK automaticamente
 
 `npm run build && node docs/capturas.mjs` regenera `docs/capturas/*.png` (importa `docs/exemplo.txt` e fotografa em viewport Pixel 7).
 
+### Publicar uma versão
+
+O F-Droid compila o app a partir das tags do git e lê a descrição da loja em `fastlane/metadata/android/`. Para cada versão:
+
+1. Suba `versionCode` (sempre +1) e `versionName` em `android/app/build.gradle`, e a mesma versão no `package.json` com `npm version <versão> --no-git-tag-version`.
+2. Escreva as novidades em `fastlane/metadata/android/{pt-BR,en-US}/changelogs/<versionCode>.txt` (até 500 caracteres) e no `CHANGELOG.md`.
+3. Faça o commit, crie a tag com `git tag -a v<versionName> -m "Folha <versionName>"` e envie as duas com `git push origin main v<versionName>`.
+
+O F-Droid detecta a tag nova sozinho e publica a versão alguns dias depois. As capturas da loja são cópias de `docs/capturas/`: depois de regenerá-las, copie-as para `fastlane/metadata/android/en-US/images/phoneScreenshots/`.
+
 ## Testes
 
 | Suíte | Comando | O que cobre |
@@ -96,6 +106,7 @@ android/         projeto Capacitor (Gradle)
 - PDF escaneado (só imagens) não é convertido em texto: cada página vira uma imagem. Não há OCR.
 - PDFs com layout complexo (tabelas, fórmulas) podem perder a estrutura ao virar texto refluível.
 - PDFs de apresentação (slides) viram a imagem de cada slide seguida do texto dele, 10 slides por capítulo.
+- O pdf.js roda sem WebAssembly, que o F-Droid não aceita pré-compilado. Imagens JBIG2 e JPEG 2000 (comuns em PDF escaneado) decodificam mais devagar, e perfis de cor ICC não são aplicados, então algumas cores podem variar um pouco.
 - Não há sincronização entre aparelhos nem DRM.
 
 ## Roadmap

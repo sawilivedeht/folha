@@ -68,7 +68,8 @@ function tryResolveBaseUrl(base: string, relative: string): string | null {
 }
 
 /**
- * URLs relativas à base do app (`base: './'`) para cmaps, fontes padrão e módulos WASM do pdf.js.
+ * URLs relativas à base do app (`base: './'`) para cmaps, fontes padrão e decodificadores de imagem
+ * do pdf.js (`wasm/` só leva as versões em JavaScript; veja `useWasm` em `parsePdf`).
  * Resolver contra a base da página garante que o Web Worker em `./assets/` encontre `./pdfjs/`.
  */
 export function getPdfAssetUrls(baseUrl?: string): {
@@ -295,6 +296,9 @@ export async function parsePdf(
   const loadingTask = getDocument({
     data: bytes,
     ...assetParams,
+    // Sem WebAssembly: o F-Droid não aceita os .wasm pré-compilados do pdf.js. JBIG2 e JPEG 2000
+    // usam as versões em JavaScript; perfis de cor ICC (QCMS) caem no espaço de cor alternativo.
+    useWasm: false,
     maxImageSize: MAX_PDF_IMAGE_PIXELS,
     canvasMaxAreaInBytes: MAX_CANVAS_AREA * 4,
   });

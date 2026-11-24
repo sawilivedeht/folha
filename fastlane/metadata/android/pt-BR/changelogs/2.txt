@@ -1,0 +1,4 @@
+Primeira versão no F-Droid.
+• O app não pede mais a permissão de internet e o backup em nuvem foi desligado.
+• PDFs voltam a abrir em WebViews Android antigos.
+• Correções de acessibilidade, na importação de EPUB e TXT e na conversão de PDF.

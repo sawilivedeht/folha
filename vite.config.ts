@@ -40,8 +40,10 @@ function resolvePdfjsRoot(): string {
 }
 
 /**
- * Copia cmaps, fontes padrão e módulos WASM do pdfjs-dist para `dist/pdfjs/` no build
- * e serve os mesmos caminhos em `/pdfjs/` durante o desenvolvimento.
+ * Copia cmaps, fontes padrão e os decodificadores de imagem em JavaScript do pdfjs-dist para
+ * `dist/pdfjs/` no build, e serve os mesmos caminhos em `/pdfjs/` durante o desenvolvimento.
+ * Os `.wasm` ficam de fora: são binários pré-compilados, que o F-Droid não aceita, e o app
+ * abre os PDFs com `useWasm: false`.
  */
 function pdfjsAssets(): Plugin {
   let outDir = 'dist';
@@ -85,7 +87,11 @@ function pdfjsAssets(): Plugin {
       for (const sub of PDFJS_ASSET_DIRS) {
         const src = join(pdfjsRoot, sub);
         if (!existsSync(src)) continue;
-        cpSync(src, join(outDir, 'pdfjs', sub), { recursive: true, force: true });
+        cpSync(src, join(outDir, 'pdfjs', sub), {
+          recursive: true,
+          force: true,
+          filter: (path) => extname(path).toLowerCase() !== '.wasm',
+        });
       }
     },
   };

@@ -4,6 +4,15 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); 
 
 ## [Não lançado]
 
+## [0.1.1] - 2026-11-24
+
+### Adicionado
+- Descrição, ícone e capturas da loja no formato fastlane (`fastlane/metadata/android/`, pt-BR e en-US), usados pelo F-Droid.
+
+### Removido
+- Plugin do Google Services no Gradle e o bloco de metadados de dependências que o AGP grava no APK (exigências do F-Droid).
+- Módulos WebAssembly pré-compilados do pdf.js, que o F-Droid não aceita: imagens JBIG2 e JPEG 2000 passam a ser decodificadas pelas versões em JavaScript, e perfis de cor ICC deixam de ser aplicados.
+
 ### Segurança
 - Content-Security-Policy restritiva; o APK não pede mais a permissão de internet e o backup em nuvem foi desligado.
 - EPUB: limite contra bomba de zip, SVG convertido em PNG na importação, regex do OPF/sumário em tempo linear.
