@@ -14,7 +14,7 @@ Leitor de e-books estilo Kindle para Android (e navegador), feito com TypeScript
 - Temas claro, sépia, escuro e preto.
 - Sumário e **marcadores** por página; o progresso de leitura é salvo automaticamente.
 - Funciona **offline**: tudo é armazenado localmente (IndexedDB).
-- **Sem rastreamento**: nenhum dado sai do aparelho.
+- **Sem rastreamento**: nenhum dado sai do aparelho. O APK não pede nenhuma permissão (nem de internet) e o backup em nuvem fica desligado; veja [docs/seguranca.md](docs/seguranca.md).
 
 ## Instalar o APK
 
@@ -69,11 +69,11 @@ Com o arquivo presente, `./gradlew assembleRelease` assina o APK automaticamente
 
 | Suíte | Comando | O que cobre |
 | --- | --- | --- |
-| Unitários e integração (vitest) | `npm test` / `npm run test:coverage` | conversão de PDF (layout, colunas, hifenização, cabeçalhos/rodapés, slides, erros), EPUB 2/3 com DOM real (happy-dom), TXT e codificações, progresso do leitor |
-| Ponta a ponta (Playwright) | `npm run test:e2e` | em 3 telas (Pixel 7, celular 360×640, tablet): importação, **todo texto cabe na página** em 4 tamanhos de fonte, navegação por toque/deslize/teclado, posição ao recarregar e girar, temas, marcadores, sumário, biblioteca, acessibilidade (axe, WCAG A/AA) e desempenho |
-| APK no emulador | `scripts/android-emulator.sh` e `node scripts/android-smoke.mjs` | WebView real do Android: importação, paginação, toques, deslize, Voltar, rotação, tempo de abertura e memória; veja [docs/teste-android.md](docs/teste-android.md) |
+| Unitários e integração (vitest) | `npm test` / `npm run test:coverage` | conversão de PDF (layout, colunas, hifenização, cabeçalhos/rodapés, slides, erros), EPUB 2/3 com DOM real (happy-dom), TXT e codificações, progresso do leitor, configurações; **fuzzing** com semente fixa de TXT/EPUB/PDF (`FUZZ_RUNS`, `FUZZ_SEED`) e testes de estresse (`ESTRESSE=1`) |
+| Ponta a ponta (Playwright) | `npm run test:e2e` | em 3 telas (Pixel 7, celular 360×640, tablet): importação, **todo texto cabe na página** em 4 tamanhos de fonte, navegação por toque/deslize/teclado, posição ao recarregar e girar, temas, marcadores, sumário, biblioteca, acessibilidade (axe, WCAG A/AA, teclado e foco), gestos, desempenho, **segurança** (EPUB/TXT/PDF hostis, CSP), **offline** (zero requisições externas), memória (vazamentos), livros grandes (`ESTRESSE=1`) e resiliência (IndexedDB indisponível, cota cheia, dados corrompidos) |
+| APK no emulador | `scripts/android-emulator.sh`, `node scripts/android-smoke.mjs` e `scripts/android-{importar,ciclo,monkey,desempenho}.mjs` | WebView real do Android: importação pelo seletor do sistema, paginação, toques, deslize, Voltar, rotação, ciclo de vida (morte do processo, tema e fonte do sistema), monkey, quadros e memória; veja [docs/teste-android.md](docs/teste-android.md) |
 
-Validar a conversão de um PDF qualquer pela linha de comando: `npm run convert-pdf -- arquivo.pdf`.
+Validar a conversão de um PDF qualquer pela linha de comando: `npm run convert-pdf -- arquivo.pdf`. Para um lote de arquivos reais (PDF, EPUB, TXT) com tempo e memória por arquivo: `node scripts/corpus.mjs <pasta>`.
 
 ## Arquitetura
 
@@ -116,7 +116,7 @@ O Folha é distribuído sob a [licença MIT](LICENSE). As dependências de execu
 | [fflate](https://github.com/101arrowz/fflate) | MIT |
 | [@capacitor/core, android, app, status-bar](https://github.com/ionic-team/capacitor) | MIT |
 
-Ferramentas de desenvolvimento (Vite, Vitest, Playwright, TypeScript etc.) não são distribuídas no APK. As bibliotecas AndroidX usadas pelo projeto Android são Apache-2.0.
+Ferramentas de desenvolvimento (Vite, Vitest, Playwright, TypeScript etc.) não são distribuídas no APK. As bibliotecas AndroidX usadas pelo projeto Android são Apache-2.0. Os avisos e textos completos das licenças estão em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), que também vai dentro do app.
 
 ## Contribuindo
 
