@@ -66,6 +66,8 @@ export async function convertPdfBytes(bytes: Uint8Array): Promise<NodePdfResult>
       chapters = extractPdfChapters(pages, { outline, yOrigin: 'top-down' });
     }
     return { title: info.title, numPages: doc.numPages, chapters, kind, slideDeck, stats, coverage, pages };
+  } catch (err) {
+    throw friendlyPdfError(err);
   } finally {
     await task.destroy();
   }

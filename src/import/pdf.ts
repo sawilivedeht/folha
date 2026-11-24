@@ -353,6 +353,9 @@ export async function parsePdf(
       ...(cover ? { cover } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     };
+  } catch (err) {
+    // Falhas ao ler páginas de um PDF danificado chegam como erros crus do pdf.js.
+    throw friendlyPdfError(err);
   } finally {
     await loadingTask.destroy();
   }

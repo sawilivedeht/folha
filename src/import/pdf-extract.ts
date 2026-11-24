@@ -139,6 +139,23 @@ export async function extractOutline(doc: PdfDocLike): Promise<PdfOutlineEntry[]
   return entries;
 }
 
+const TITLE_EXTENSION_RE = /\.(?:pdf|docx?|odt|rtf|pptx?|odp|xlsx?|indd|tex|txt|html?|qxd|pub)\s*$/i;
+const TITLE_PREFIX_RE = /^(?:microsoft\s+(?:word|powerpoint|excel)|pdf\s*maker|adobe\s+\w+)\s*-\s*/i;
+const TITLE_PLACEHOLDER_RE = /^(?:untitled|sem\s+t[ií]tulo|document\d*|documento\d*|slide\s*\d+|apresenta[çc][ãa]o\d*|p[áa]gina\s*\d+|title|t[ií]tulo)$/i;
+
+/**
+ * Limpa o título dos metadados: remove prefixos de programa ("Microsoft Word - ") e descarta o que
+ * é só nome de arquivo ("RELATORIO.pdf - RELATORIO.pdf", "relatorio.docx") ou texto padrão ("Untitled").
+ * Devolve '' quando não sobra um título de verdade; o chamador usa o nome do arquivo.
+ */
+export function cleanPdfTitle(raw: string): string {
+  let t = raw.replace(/[\u0000-\u001f\u007f-\u009f\ufffd]/g, ' ').replace(/\s+/g, ' ').trim();
+  t = t.replace(TITLE_PREFIX_RE, '').trim();
+  if (!t || TITLE_EXTENSION_RE.test(t) || TITLE_PLACEHOLDER_RE.test(t)) return '';
+  if (!/[\p{L}\p{N}]/u.test(t)) return '';
+  return t;
+}
+
 /** Título e autor dos metadados do PDF (vazios quando ausentes). */
 export async function readPdfInfo(doc: PdfDocLike): Promise<{ title: string; author: string }> {
   let title = '';
@@ -146,7 +163,7 @@ export async function readPdfInfo(doc: PdfDocLike): Promise<{ title: string; aut
   try {
     const meta = await doc.getMetadata();
     const info = (meta?.info ?? {}) as Record<string, unknown>;
-    if (typeof info.Title === 'string') title = info.Title.trim();
+    if (typeof info.Title === 'string') title = cleanPdfTitle(info.Title);
     if (typeof info.Author === 'string') author = info.Author.trim();
   } catch {
     // Metadados ausentes ou corrompidos.
@@ -262,6 +279,10 @@ export function friendlyPdfError(err: unknown): Error {
   if (name === 'PasswordException') return new Error('PDF protegido por senha. Remova a senha e tente de novo.');
   if (name === 'InvalidPDFException') return new Error('Este arquivo PDF está corrompido ou não é um PDF válido.');
   if (name === 'MissingPDFException') return new Error('Arquivo PDF não encontrado.');
-  if (err instanceof Error && /^(PDF|Este arquivo)/.test(message)) return err;
+  // Erros de estrutura do pdf.js (xref quebrada, objeto ilegível...) trazem mensagens técnicas em inglês.
+  if (/^(FormatError|XRefParseException|UnknownErrorException|ResponseException)$/.test(name)) {
+    return new Error('Este arquivo PDF está corrompido ou incompleto.');
+  }
+  if (err instanceof Error && /^(PDF|Este arquivo|O PDF)/.test(message)) return err;
   return new Error(`Não foi possível ler o PDF${message ? ` (${message})` : ''}.`);
 }

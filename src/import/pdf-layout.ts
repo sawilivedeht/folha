@@ -1385,6 +1385,46 @@ function formatPageRangeTitle(startPage: number, endPage: number): string {
   return `Páginas ${startPage}–${endPage}`;
 }
 
+/** Capítulo de texto (sem imagens) com menos caracteres que isto é "minúsculo". */
+const MIN_HEADING_CHAPTER_CHARS = 300;
+/** Uma sequência com pelo menos esta quantidade de capítulos minúsculos seguidos é lixo de layout. */
+const MIN_TINY_RUN = 3;
+
+/**
+ * Pranchas técnicas, folhas de rosto e legendas soltas têm letras grandes que parecem títulos e
+ * geravam dezenas de "capítulos" de poucos caracteres ("F", "E", "4 3"). Uma sequência de 3 ou mais
+ * capítulos minúsculos seguidos é anexada ao capítulo anterior (ou ao seguinte, se estiver no
+ * início); os blocos continuam no livro. Capítulos curtos isolados (dedicatória, epígrafe) ficam.
+ */
+function mergeTinyChapters(chapters: Chapter[]): Chapter[] {
+  const isTiny = (ch: Chapter) =>
+    !ch.blocks.some((b) => b.t === 'img') && ch.blocks.reduce((n, b) => n + blockCharCount(b), 0) < MIN_HEADING_CHAPTER_CHARS;
+  const out: Chapter[] = [];
+  let carry: Block[] = []; // blocos de uma sequência no início, que vão para o próximo capítulo
+  let i = 0;
+  while (i < chapters.length) {
+    let j = i;
+    while (j < chapters.length && isTiny(chapters[j])) j++;
+    if (j - i >= MIN_TINY_RUN) {
+      const blocks = chapters.slice(i, j).flatMap((c) => c.blocks);
+      const last = out[out.length - 1];
+      if (last) last.blocks.push(...blocks);
+      else carry = blocks;
+      i = j;
+      continue;
+    }
+    const ch = chapters[i];
+    if (carry.length > 0) {
+      ch.blocks = [...carry, ...ch.blocks];
+      carry = [];
+    }
+    out.push(ch);
+    i++;
+  }
+  if (carry.length > 0) out.push({ title: chapters[0].title, blocks: carry }); // só havia lixo: um capítulo
+  return out;
+}
+
 /** Divide blocos em capítulos pelos títulos detectados (nível 1 ou maior nível existente). */
 function splitByHeadings(blocks: TaggedBlock[]): Chapter[] {
   let minLevel: 1 | 2 | 3 | null = null;
@@ -1434,7 +1474,7 @@ function splitByHeadings(blocks: TaggedBlock[]): Chapter[] {
   }
   flush();
 
-  return chapters;
+  return mergeTinyChapters(chapters);
 }
 
 /** Divide blocos em capítulos fixos de ~N páginas quando não há títulos nem sumário. */

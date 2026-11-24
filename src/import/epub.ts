@@ -24,6 +24,12 @@ export interface OpfData {
   tocId?: string;
 }
 
+/** Limites de conteúdo descompactado (proteção contra "bombas de zip" que esgotam a memória do aparelho). */
+export const MAX_EPUB_ENTRY_BYTES = 128 * 1024 * 1024;
+export const MAX_EPUB_TOTAL_BYTES = 512 * 1024 * 1024;
+
+class EpubTooLargeError extends Error {}
+
 export interface ParseEpubOptions {
   /** Parser injetável de XHTML/HTML (padrão: `DOMParser` do navegador). */
   parseDocument?: (html: string) => Document;
@@ -288,9 +294,21 @@ export async function parseEpub(
 ): Promise<ParsedBook> {
   onProgress(0, 'Descompactando EPUB...');
   let files: Record<string, Uint8Array>;
+  let totalBytes = 0;
   try {
-    files = unzipSync(new Uint8Array(data));
-  } catch {
+    files = unzipSync(new Uint8Array(data), {
+      filter: (info) => {
+        totalBytes += info.originalSize;
+        if (info.originalSize > MAX_EPUB_ENTRY_BYTES || totalBytes > MAX_EPUB_TOTAL_BYTES) {
+          throw new EpubTooLargeError('limite de tamanho');
+        }
+        return true;
+      },
+    });
+  } catch (err) {
+    if (err instanceof EpubTooLargeError) {
+      throw new Error('EPUB grande demais para abrir: o conteúdo descompactado passa de 512 MB.');
+    }
     throw new Error('EPUB inválido: o arquivo está corrompido ou incompleto (não foi possível descompactar).');
   }
   const utf8 = new TextDecoder('utf-8');
