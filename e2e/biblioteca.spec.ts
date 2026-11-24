@@ -34,14 +34,16 @@ test.describe('Biblioteca', () => {
     const esperado = [...porTitulo].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
     expect(porTitulo).toEqual(esperado);
 
+    // Por autor: autores de A a Z primeiro; livros sem autor vão para o fim (desempate por título).
     await ordenar.selectOption('author');
-    await expect(page.locator('.lib-grid .lib-card').last().locator('.lib-card-author')).toHaveText('Zeca Antigo');
+    await expect(page.locator('.lib-grid .lib-card').first().locator('.lib-card-author')).toHaveText('Autora Exemplar');
     const cards = await page.locator('.lib-grid .lib-card').all();
     const autores: string[] = [];
     for (const c of cards) autores.push((await c.locator('.lib-card-author').count()) ? ((await c.locator('.lib-card-author').textContent()) ?? '') : '');
-    const autoresOrd = [...autores].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-    expect(autores).toEqual(autoresOrd);
-    expect(autores.slice(-2)).toEqual(['Autora Exemplar', 'Zeca Antigo']);
+    const comAutor = autores.filter((a) => a !== '');
+    expect(autores.slice(0, comAutor.length)).toEqual(comAutor);
+    expect(comAutor).toEqual([...comAutor].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' })));
+    expect(comAutor).toEqual(['Autora Exemplar', 'Zeca Antigo']);
 
     await ordenar.selectOption('recent');
     await expect(page.locator('.lib-grid .lib-card-title').first()).toHaveText('Livro EPUB Dois'); // o último importado vem primeiro

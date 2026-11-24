@@ -14,6 +14,8 @@ const ROTULO_TEMA: Record<Tema, string> = {
 async function violacoesGraves(page: Page, escopo?: string): Promise<string[]> {
   // Aguarda o fim de transições finitas e um par de quadros para o axe ler as cores finais sem tempo fixo.
   await page.evaluate(async () => {
+    // Dois quadros antes: logo após um clique a transição ainda não foi registrada em getAnimations().
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
     const anims = document
       .getAnimations()
       .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity);
