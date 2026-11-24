@@ -24,7 +24,7 @@ node scripts/android-smoke.mjs
 adb emu kill
 ```
 
-As capturas vão para `docs/capturas-android/`. As versionadas foram reduzidas para 540 px de largura e 128 cores (Pillow) para ficarem abaixo de 130 KB.
+As capturas vão para uma pasta temporária (`$TMPDIR/folha-capturas-android`); para atualizar as do repositório, rode com `CAPTURAS_DIR=docs/capturas-android` e comprima depois. As versionadas foram reduzidas para 540 px de largura e 128 cores (Pillow) para ficarem abaixo de 130 KB.
 
 ## O que o teste faz
 
@@ -57,13 +57,13 @@ um arquivo real: `adb push livro.epub /sdcard/Download/` e escolha-o pelo seleto
 | Toque direito/esquerdo e deslizes viram página | ok (passo de 412 px) |
 | Rotação mantém a posição | ok (parágrafo 1.6 para 1.5, mesmo capítulo) |
 | Voltar no leitor leva à estante | ok |
-| Voltar na estante sai do app no 1º toque | FALHA (precisa de 2 toques) |
+| Voltar na estante sai do app no 1º toque | FALHA na 1ª rodada; ok depois da correção em `src/main.ts` |
 
 Números: abertura a frio 0,9 a 1,5 s (TotalTime, variando entre execuções); memória TOTAL PSS cerca de 98 a 100 MB.
 
 ### Problemas encontrados
 
-- **Voltar na estante exige dois toques depois de ter lido** (`src/main.ts`). O Voltar do leitor usa `navigate('#/', true)`
+- **(Corrigido)** **Voltar na estante exigia dois toques depois de ter lido** (`src/main.ts`). O Voltar do leitor usa `navigate('#/', true)`
   (`replaceState`) e a entrada anterior da pilha também é `#/`; então o próximo Voltar cai no ramo `canGoBack` e só faz
   `history.back()`. Correção sugerida: no leitor, usar `history.back()` quando houve navegação por `pushState`, ou
   sair direto (`App.exitApp()`) quando o hash for `#/` e a pilha só tiver estantes.
@@ -104,9 +104,9 @@ Se uma troca debug/release der `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, rode `adb u
 
 ### Inspeção do release (aapt2)
 
-- Assinatura: v2 válida (`apksigner verify`); sem v1/v3. `minSdk` 24, `targetSdk` 36, versão 0.1.0 (código 1), 1,5 MB.
-- Não é `debuggable` (flags `HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP`); `allowBackup="true"`.
-- Permissões: apenas `INTERNET` (e a permissão interna `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` do AndroidX).
+- Assinatura: v2 válida (`apksigner verify`); sem v1/v3. `minSdk` 24, `targetSdk` 36, versão 0.1.0 (código 1), 1,5 MB nesta rodada; 3,5 MB depois da troca para o pdf.js legacy com cmaps, fontes padrão e wasm.
+- Não é `debuggable` (flags `HAS_CODE ALLOW_CLEAR_USER_DATA ALLOW_BACKUP`); `allowBackup="true"` nesta rodada; agora `allowBackup="false"` e `usesCleartextTraffic="false"`.
+- Permissões: nesta rodada, apenas `INTERNET`; agora nenhuma, só a permissão interna `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` do AndroidX).
 - Exportados: `MainActivity` (launcher, necessário) e o `ProfileInstallReceiver` do AndroidX (protegido por `android.permission.DUMP`).
   `FileProvider` e `InitializationProvider` não são exportados.
 - R8/minify não quebrou o Capacitor: estante, importação de TXT/EPUB, leitura e navegação funcionam no release.
@@ -139,6 +139,8 @@ Se uma troca debug/release der `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, rode `adb u
   (antes, `Setting up fake worker`). Dois defeitos: (1) incompatibilidade com WebViews antigos, comuns em Android 7 a 9 sem atualização;
   (2) o erro não chega ao usuário, que fica com o diálogo de importação para sempre. Teste feito: trocar os imports de `src/import/pdf.ts`
   para `pdfjs-dist/legacy/build/pdf.mjs` e `pdfjs-dist/legacy/build/pdf.worker.min.mjs?url` faz o PDF importar normalmente (2,5 s o pequeno).
+  **Corrigido**: o app usa o build legacy e, se o motor do pdf.js não iniciar, a importação falha com mensagem após 60 s.
+  Confirmado no emulador com o APK final: smoke 13/13, PDF pelo seletor em 2,5 s, ciclo de vida 16/16.
 - **Mudar a escala de fonte do sistema com o leitor aberto leva à estante** (`configChanges` do `AndroidManifest.xml` não inclui
   `fontScale`, então a atividade é recriada). A posição é preservada.
 - **Depois de matar o processo o app reabre na estante**, não no leitor (o hash `#/ler/...` não sobrevive). A posição volta ao abrir o livro.
@@ -146,7 +148,7 @@ Se uma troca debug/release der `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, rode `adb u
 
 ### Sem a permissão INTERNET
 
-Removendo `<uses-permission android:name="android.permission.INTERNET"/>` do `AndroidManifest.xml` (experimento, não integrado), o release
+Removendo `<uses-permission android:name="android.permission.INTERNET"/>` do `AndroidManifest.xml` (integrado depois: o manifesto não pede mais nenhuma permissão), o release
 sai só com a permissão interna do AndroidX e funciona por inteiro: estante, importar TXT/EPUB/PDF (inclusive os 38 MB), ler, virar página,
 ciclo de vida. Nenhum `SecurityException`, `EPERM` ou erro de rede do app no logcat. O Capacitor serve os arquivos por `WebViewAssetLoader`
 (sem socket), por isso não precisa da permissão. Isso reforça a promessa de funcionar offline: o app nem poderia sair para a rede.

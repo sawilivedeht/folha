@@ -4,14 +4,18 @@
 // Uso: node scripts/android-smoke.mjs   (com o emulador já no ar: scripts/android-emulator.sh)
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ADB = join(process.env.ANDROID_HOME ?? join(homedir(), 'Android/Sdk'), 'platform-tools/adb');
 const PKG = 'app.folha.leitor';
 const PORT = 9333;
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '../docs/capturas-android');
+// Capturas vão para uma pasta temporária; para atualizar as do repositório (depois comprimidas, ≤ 130 KB cada):
+// CAPTURAS_DIR=docs/capturas-android node scripts/android-smoke.mjs
+const OUT = process.env.CAPTURAS_DIR
+  ? join(dirname(fileURLToPath(import.meta.url)), '..', process.env.CAPTURAS_DIR)
+  : join(tmpdir(), 'folha-capturas-android');
 mkdirSync(OUT, { recursive: true });
 
 const adb = (...a) => execFileSync(ADB, a, { encoding: 'utf8', maxBuffer: 64 << 20 }).replace(/\r/g, '');
