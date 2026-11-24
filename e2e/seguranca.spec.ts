@@ -324,7 +324,7 @@ test.describe('Segurança: conteúdo hostil', () => {
   // `parseNavToc`) usam `<tag[^>]*>([\s\S]*?)</tag>`; com milhares de aberturas sem fechamento, cada tentativa
   // varre o resto do arquivo (custo quadrático). Um EPUB de 3 KB (OPF de ~900 KB) congela a thread principal
   // por vários segundos (no Android isso vira "o app não responde"). Corrigir em epub.ts.
-  test.fail('OPF com milhares de <dc:title> sem fechamento não congela a importação', async ({ page }) => {
+  test('OPF com milhares de <dc:title> sem fechamento não congela a importação', async ({ page }) => {
     test.setTimeout(240_000);
     const v = await vigiar(page);
     await abrirEstante(page);
@@ -344,7 +344,7 @@ test.describe('Segurança: conteúdo hostil', () => {
   // `window.open(blob)` feito pela página herda a CSP e fica bloqueado; o problema é só a navegação do usuário.
   // Correção sugerida em epub.ts: rasterizar SVG para PNG na importação (ou descartá-lo) e só aceitar tipos de
   // imagem raster conferidos pelos bytes. O teste abre o blob numa aba nova, como faria o menu do navegador.
-  test.fail('imagem SVG do livro aberta em nova aba não executa script na origem do app', async ({ page }) => {
+  test('imagem SVG do livro aberta em nova aba não executa script na origem do app', async ({ page }) => {
     await vigiar(page);
     await abrirEstante(page);
     await importarEFechar(page, ['malicioso.epub']);

@@ -37,6 +37,48 @@ const BLOCK_TAGS = new Set([
   'dd',
 ]);
 
+const INLINE_BLOCK_SEPARATORS = new Set([...BLOCK_TAGS, 'summary', 'tr', 'caption']);
+const INLINE_SPACE_SEPARATORS = new Set(['td', 'th']);
+
+const PLAIN_BOUNDARY_TAGS = new Set([
+  'p',
+  'div',
+  'li',
+  'tr',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'dt',
+  'dd',
+  'blockquote',
+  'section',
+  'article',
+  'figure',
+  'figcaption',
+  'caption',
+  'summary',
+]);
+const PLAIN_SPACE_TAGS = new Set(['td', 'th']);
+
+const LIST_DELEGATE_TAGS = new Set(['blockquote', 'pre', 'table', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const CONTAINER_DELEGATE_TRIGGERS = new Set([
+  'blockquote',
+  'pre',
+  'table',
+  'ul',
+  'ol',
+  'hr',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+]);
+
 const HEADING_LEVELS: Record<string, 1 | 2 | 3> = {
   h1: 1,
   h2: 2,
@@ -53,7 +95,9 @@ interface InlineStyle {
 }
 
 function tagName(el: Element): string {
-  return (el.localName || el.tagName).toLowerCase();
+  const raw = (el.localName || el.tagName).toLowerCase();
+  const colon = raw.indexOf(':');
+  return colon === -1 ? raw : raw.slice(colon + 1);
 }
 
 function collapseWs(text: string): string {
@@ -70,6 +114,14 @@ function makeRun(s: string, style: InlineStyle): Run {
   if (style.i) run.i = 1;
   if (style.sup) run.sup = 1;
   return run;
+}
+
+function pushSeparator(runs: Run[], sep: '\n' | ' '): void {
+  if (runs.length === 0) return;
+  const last = runs[runs.length - 1].s;
+  if (last.endsWith('\n')) return;
+  if (sep === ' ' && last.endsWith(' ')) return;
+  runs.push({ s: sep });
 }
 
 /** Normaliza espaços entre runs, remove espaços nas bordas e ao redor de `\n`, e mescla runs iguais. */
@@ -140,7 +192,9 @@ function finalizeRuns(rawRuns: Run[]): { text: string; runs?: Run[] } | null {
 
 function parsePositiveInt(val: string | null): number | undefined {
   if (!val) return undefined;
-  const n = Number.parseInt(val, 10);
+  const m = /^\s*(\d+)(?:\.\d+)?(?:px)?\s*$/i.exec(val);
+  if (!m) return undefined;
+  const n = Number.parseInt(m[1], 10);
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
@@ -167,14 +221,29 @@ function buildImgBlock(
   return block;
 }
 
+function collectSvgImageElements(node: Element, out: Element[]): void {
+  for (let i = 0; i < node.childNodes.length; i++) {
+    const child = node.childNodes[i];
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+    const tag = tagName(el);
+    if (tag === 'image' || tag.endsWith(':image')) {
+      out.push(el);
+    } else {
+      collectSvgImageElements(el, out);
+    }
+  }
+}
+
 function extractImageFromSvg(svg: Element, opts: HtmlBlocksOptions): Block[] {
   const blocks: Block[] = [];
-  const images = svg.getElementsByTagName('image');
+  const images: Element[] = [];
+  collectSvgImageElements(svg, images);
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
     const href =
       img.getAttribute('href') ??
-      img.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ??
+      (typeof img.getAttributeNS === 'function' ? img.getAttributeNS('http://www.w3.org/1999/xlink', 'href') : null) ??
       img.getAttribute('xlink:href');
     const block = buildImgBlock(href, null, img.getAttribute('width'), img.getAttribute('height'), opts);
     if (block) blocks.push(block);
@@ -189,7 +258,12 @@ function nextStyle(tag: string, current: InlineStyle): InlineStyle {
   return current;
 }
 
-/** Coleta runs inline, quebrando em blocos `img` quando encontra `<img>` ou `<svg><image>`. */
+function buildPreBlock(el: Element): Block | null {
+  const raw = (el.textContent ?? '').replace(/\r\n?/g, '\n').replace(/^\n+|\n+$/g, '');
+  return raw.trim().length > 0 ? { t: 'pre', text: raw } : null;
+}
+
+/** Coleta runs inline, quebrando em blocos `img`/`pre` e preservando separação em blocos aninhados. */
 function collectInline(
   node: Node,
   style: InlineStyle,
@@ -211,6 +285,13 @@ function collectInline(
 
   if (tag === 'br') {
     runs.push({ s: '\n' });
+    return;
+  }
+
+  if (tag === 'pre') {
+    flushText();
+    const pre = buildPreBlock(el);
+    if (pre) out.push(pre);
     return;
   }
 
@@ -236,13 +317,28 @@ function collectInline(
     return;
   }
 
+  const isBlockSep = INLINE_BLOCK_SEPARATORS.has(tag);
+  const isSpaceSep = INLINE_SPACE_SEPARATORS.has(tag);
+  if (isBlockSep) pushSeparator(runs, '\n');
+  else if (isSpaceSep) pushSeparator(runs, ' ');
+
   const childStyle = nextStyle(tag, style);
   for (let i = 0; i < el.childNodes.length; i++) {
     collectInline(el.childNodes[i], childStyle, runs, out, flushText, opts);
   }
+
+  if (isBlockSep) pushSeparator(runs, '\n');
+  else if (isSpaceSep) pushSeparator(runs, ' ');
 }
 
-function collectPlainRuns(node: Node, style: InlineStyle, runs: Run[]): void {
+function collectPlainRuns(
+  node: Node,
+  style: InlineStyle,
+  runs: Run[],
+  images?: Block[],
+  altTexts?: string[],
+  opts: HtmlBlocksOptions = {},
+): void {
   if (node.nodeType === 3) {
     const collapsed = collapseWs(node.textContent ?? '');
     if (collapsed) runs.push(makeRun(collapsed, style));
@@ -258,31 +354,82 @@ function collectPlainRuns(node: Node, style: InlineStyle, runs: Run[]): void {
     return;
   }
 
+  if (tag === 'img') {
+    const alt = el.getAttribute('alt')?.trim();
+    if (alt && altTexts) altTexts.push(alt);
+    if (images) {
+      const img = buildImgBlock(
+        el.getAttribute('src'),
+        el.getAttribute('alt'),
+        el.getAttribute('width'),
+        el.getAttribute('height'),
+        opts,
+      );
+      if (img) images.push(img);
+    }
+    return;
+  }
+
+  if (tag === 'svg') {
+    if (images) {
+      images.push(...extractImageFromSvg(el, opts));
+    }
+    return;
+  }
+
   const childStyle = nextStyle(tag, style);
-  const isBlockBoundary = tag === 'p' || tag === 'div' || tag === 'li';
-  if (isBlockBoundary && runs.length > 0) {
-    runs.push({ s: '\n' });
+  const isBlockBoundary = PLAIN_BOUNDARY_TAGS.has(tag);
+  const isSpaceBoundary = PLAIN_SPACE_TAGS.has(tag);
+  if (isBlockBoundary) {
+    pushSeparator(runs, '\n');
+  } else if (isSpaceBoundary) {
+    pushSeparator(runs, ' ');
   }
   for (let i = 0; i < el.childNodes.length; i++) {
-    collectPlainRuns(el.childNodes[i], childStyle, runs);
+    collectPlainRuns(el.childNodes[i], childStyle, runs, images, altTexts, opts);
   }
-  if (isBlockBoundary && runs.length > 0) {
-    runs.push({ s: '\n' });
+  if (isBlockBoundary) {
+    pushSeparator(runs, '\n');
+  } else if (isSpaceBoundary) {
+    pushSeparator(runs, ' ');
   }
 }
 
-function processTable(table: Element, out: Block[]): void {
+function belongsToTable(el: Element, table: Element): boolean {
+  let parent: Element | null = el.parentElement;
+  while (parent && parent !== table && tagName(parent) !== 'table') {
+    parent = parent.parentElement;
+  }
+  return parent === table;
+}
+
+function processTable(table: Element, out: Block[], opts: HtmlBlocksOptions): void {
+  // Preserva <caption> direta desta tabela (sem duplicar legendas de tabelas aninhadas)
+  const captions = table.getElementsByTagName('caption');
+  for (let i = 0; i < captions.length; i++) {
+    const cap = captions[i];
+    if (!belongsToTable(cap, table)) continue;
+    let capRuns: Run[] = [];
+    const flushCap = () => {
+      const res = finalizeRuns(capRuns);
+      capRuns = [];
+      if (res) {
+        out.push(res.runs ? { t: 'p', text: res.text, runs: res.runs } : { t: 'p', text: res.text });
+      }
+    };
+    for (let c = 0; c < cap.childNodes.length; c++) {
+      collectInline(cap.childNodes[c], {}, capRuns, out, flushCap, opts);
+    }
+    flushCap();
+  }
+
   const rows = table.getElementsByTagName('tr');
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    // Evita processar linhas de tabelas aninhadas duas vezes
-    let parent: Element | null = row.parentElement;
-    while (parent && parent !== table && tagName(parent) !== 'table') {
-      parent = parent.parentElement;
-    }
-    if (parent !== table) continue;
+    if (!belongsToTable(row, table)) continue;
 
     const rowRuns: Run[] = [];
+    const rowImages: Block[] = [];
     let hasCell = false;
     for (let c = 0; c < row.children.length; c++) {
       const cell = row.children[c];
@@ -290,7 +437,7 @@ function processTable(table: Element, out: Block[]): void {
       if (cellTag !== 'td' && cellTag !== 'th') continue;
 
       const cellRuns: Run[] = [];
-      collectPlainRuns(cell, {}, cellRuns);
+      collectPlainRuns(cell, {}, cellRuns, rowImages, undefined, opts);
       const finalized = finalizeRuns(cellRuns);
       if (!finalized) continue;
 
@@ -304,19 +451,66 @@ function processTable(table: Element, out: Block[]): void {
     if (rowFinal) {
       out.push(rowFinal.runs ? { t: 'p', text: rowFinal.text, runs: rowFinal.runs } : { t: 'p', text: rowFinal.text });
     }
+    if (rowImages.length > 0) {
+      out.push(...rowImages);
+    }
   }
 }
 
-function processList(listEl: Element, ordered: boolean, out: Block[], opts: HtmlBlocksOptions): void {
-  for (let i = 0; i < listEl.children.length; i++) {
-    const child = listEl.children[i];
-    const tag = tagName(child);
-    if (tag === 'li') {
-      processListItem(child, ordered, out, opts);
-    } else if (tag === 'ul' || tag === 'ol') {
-      processList(child, tag === 'ol', out, opts);
-    }
+function hasDirectLiChild(el: Element): boolean {
+  for (let i = 0; i < el.children.length; i++) {
+    if (tagName(el.children[i]) === 'li') return true;
   }
+  return false;
+}
+
+function hasDescendantInSet(el: Element, tags: Set<string>): boolean {
+  for (let i = 0; i < el.children.length; i++) {
+    const child = el.children[i];
+    if (tags.has(tagName(child)) || hasDescendantInSet(child, tags)) return true;
+  }
+  return false;
+}
+
+function processList(listEl: Element, ordered: boolean, out: Block[], opts: HtmlBlocksOptions): void {
+  let looseRuns: Run[] = [];
+  const flushLoose = () => {
+    const res = finalizeRuns(looseRuns);
+    looseRuns = [];
+    if (res) {
+      out.push(res.runs ? { t: 'p', text: res.text, runs: res.runs } : { t: 'p', text: res.text });
+    }
+  };
+
+  for (let i = 0; i < listEl.childNodes.length; i++) {
+    const child = listEl.childNodes[i];
+    if (child.nodeType === 1) {
+      const el = child as Element;
+      const tag = tagName(el);
+      if (IGNORED_TAGS.has(tag)) continue;
+      if (tag === 'li') {
+        flushLoose();
+        processListItem(el, ordered, out, opts);
+        continue;
+      }
+      if (tag === 'ul' || tag === 'ol') {
+        flushLoose();
+        processList(el, tag === 'ol', out, opts);
+        continue;
+      }
+      if (BLOCK_TAGS.has(tag)) {
+        flushLoose();
+        if (tag === 'div' && hasDirectLiChild(el)) {
+          processList(el, ordered, out, opts);
+        } else {
+          processBlockElement(el, out, opts);
+        }
+        continue;
+      }
+    }
+    collectInline(child, {}, looseRuns, out, flushLoose, opts);
+  }
+  flushLoose();
 }
 
 function processListItem(li: Element, ordered: boolean, out: Block[], opts: HtmlBlocksOptions): void {
@@ -334,14 +528,20 @@ function processListItem(li: Element, ordered: boolean, out: Block[], opts: Html
     if (child.nodeType === 1) {
       const el = child as Element;
       const tag = tagName(el);
+      if (IGNORED_TAGS.has(tag)) continue;
       if (tag === 'ul' || tag === 'ol') {
         flushLi();
         processList(el, tag === 'ol', out, opts);
         continue;
       }
-      if (tag === 'p' || tag === 'div') {
-        if (runs.length > 0) runs.push({ s: '\n' });
-        collectInline(el, {}, runs, out, flushLi, opts);
+      if (LIST_DELEGATE_TAGS.has(tag)) {
+        flushLi();
+        processBlockElement(el, out, opts);
+        continue;
+      }
+      if ((tag === 'div' || tag === 'section' || tag === 'article' || tag === 'figure') && hasDescendantInSet(el, CONTAINER_DELEGATE_TRIGGERS)) {
+        flushLi();
+        processBlockElement(el, out, opts);
         continue;
       }
     }
@@ -362,25 +562,35 @@ function processBlockElement(el: Element, out: Block[], opts: HtmlBlocksOptions)
   const headingLevel = HEADING_LEVELS[tag];
   if (headingLevel) {
     const runs: Run[] = [];
-    collectPlainRuns(el, {}, runs);
+    const imgs: Block[] = [];
+    const alts: string[] = [];
+    collectPlainRuns(el, {}, runs, imgs, alts, opts);
     const res = finalizeRuns(runs);
-    if (res) out.push({ t: 'h', level: headingLevel, text: res.text });
+    const headingText = res?.text || alts.join(' ').trim();
+    if (headingText) out.push({ t: 'h', level: headingLevel, text: headingText });
+    if (imgs.length > 0) out.push(...imgs);
     return;
   }
 
   if (tag === 'pre') {
-    const raw = (el.textContent ?? '').replace(/\r\n?/g, '\n').replace(/^\n+|\n+$/g, '');
-    if (raw.trim().length > 0) out.push({ t: 'pre', text: raw });
+    const pre = buildPreBlock(el);
+    if (pre) out.push(pre);
     return;
   }
 
   if (tag === 'blockquote') {
-    const runs: Run[] = [];
-    collectPlainRuns(el, {}, runs);
-    const res = finalizeRuns(runs);
-    if (res) {
-      out.push(res.runs ? { t: 'quote', text: res.text, runs: res.runs } : { t: 'quote', text: res.text });
+    let runs: Run[] = [];
+    const flushQuote = () => {
+      const res = finalizeRuns(runs);
+      runs = [];
+      if (res) {
+        out.push(res.runs ? { t: 'quote', text: res.text, runs: res.runs } : { t: 'quote', text: res.text });
+      }
+    };
+    for (let i = 0; i < el.childNodes.length; i++) {
+      collectInline(el.childNodes[i], {}, runs, out, flushQuote, opts);
     }
+    flushQuote();
     return;
   }
 
@@ -395,7 +605,7 @@ function processBlockElement(el: Element, out: Block[], opts: HtmlBlocksOptions)
   }
 
   if (tag === 'table') {
-    processTable(el, out);
+    processTable(el, out, opts);
     return;
   }
 
@@ -451,6 +661,13 @@ export function htmlToBlocks(doc: Document, opts: HtmlBlocksOptions = {}): Block
   const root = doc.body ?? doc.documentElement;
   if (!root) return [];
   const blocks: Block[] = [];
+  if (tagName(root) === 'svg') {
+    blocks.push(...extractImageFromSvg(root, opts));
+    if (blocks.length === 0) {
+      processContainer(root, blocks, opts);
+    }
+    return blocks;
+  }
   processContainer(root, blocks, opts);
   return blocks;
 }

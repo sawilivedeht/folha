@@ -310,3 +310,220 @@ describe('parseEpub: robustez', () => {
     await expect(parse(new Uint8Array(0))).rejects.toThrow(/EPUB/);
   });
 });
+
+describe('parseEpub: correções de codificação, fallback HTML, caminhos, SVG e pre-paginated', () => {
+  const CONTAINER =
+    '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>';
+
+  function encodeUtf16LeWithBom(text: string): Uint8Array {
+    const out = new Uint8Array(2 + text.length * 2);
+    out[0] = 0xff;
+    out[1] = 0xfe;
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      out[2 + i * 2] = code & 0xff;
+      out[2 + i * 2 + 1] = code >> 8;
+    }
+    return out;
+  }
+
+  it('ignora entradas não usadas (fontes, CSS, JS, áudio, vídeo) sem quebrar a importação (achado 1)', async () => {
+    const epub = buildEpub({
+      chapters: [{ file: 'Text/c1.xhtml', xhtml: xhtmlDoc('<p>Texto normal</p><img src="../Styles/app.css"/>') }],
+      extra: {
+        'Styles/app.css': strToU8('body { color: red; }'),
+        'Fonts/serif.ttf': new Uint8Array([0, 1, 2, 3]),
+        'Audio/narra.mp3': new Uint8Array([4, 5, 6, 7]),
+        'Video/clip.mp4': new Uint8Array([8, 9, 10, 11]),
+        'Scripts/x.js': strToU8('alert(1)'),
+      },
+    });
+    const book = await parse(epub);
+    expect(book.chapters).toHaveLength(1);
+    expect(book.images.size).toBe(0);
+  });
+
+  it('importa EPUB em UTF-16LE com BOM e EPUB 2 em ISO-8859-1 preservando acentos (achado 2)', async () => {
+    const opfUtf16 =
+      '<?xml version="1.0" encoding="utf-16"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">' +
+      '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Ação em UTF-16</dc:title></metadata>' +
+      '<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>' +
+      '<spine><itemref idref="c1"/></spine></package>';
+    const chUtf16 = xhtmlDoc('<h1>Coração</h1><p>Texto acentuado: é, ç, ã.</p>');
+    const zipUtf16 = zipSync({
+      'META-INF/container.xml': encodeUtf16LeWithBom(CONTAINER),
+      'OEBPS/content.opf': encodeUtf16LeWithBom(opfUtf16),
+      'OEBPS/c1.xhtml': encodeUtf16LeWithBom(chUtf16),
+    });
+    const book16 = await parse(zipUtf16);
+    expect(book16.title).toBe('Ação em UTF-16');
+    expect(book16.chapters[0].blocks[0]).toEqual({ t: 'h', level: 1, text: 'Coração' });
+
+    const latin = (s: string): Uint8Array => {
+      const map: Record<string, number> = { ç: 0xe7, ã: 0xe3, é: 0xe9, '—': 0x97 };
+      return new Uint8Array(Array.from(s, (ch) => map[ch] ?? ch.charCodeAt(0)));
+    };
+    const opfLatin =
+      '<?xml version="1.0" encoding="iso-8859-1"?><package xmlns="http://www.idpf.org/2007/opf" version="2.0">' +
+      '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Coração</dc:title></metadata>' +
+      '<manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>' +
+      '<spine><itemref idref="c1"/></spine></package>';
+    const chLatin =
+      '<?xml version="1.0" encoding="iso-8859-1"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>Ação — café</p></body></html>';
+    const zipLatin = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': latin(opfLatin),
+      'OEBPS/c1.xhtml': latin(chLatin),
+    });
+    const bookLatin = await parse(zipLatin);
+    expect(bookLatin.title).toBe('Coração');
+    expect(bookLatin.chapters[0].blocks[0]).toEqual({ t: 'p', text: 'Ação — café' });
+  });
+
+  it('fallback text/html não descarta o capítulo quando há <title/>, <style/> ou <script/> autofechados (achado 3)', async () => {
+    const xhtml =
+      '<?xml version="1.0" encoding="utf-8"?>' +
+      '<html xmlns="http://www.w3.org/1999/xhtml"><head><title/><style/><script src="x.js"/></head>' +
+      '<body><h1>Capítulo preservado</h1><p>Texto com &nbsp; e <br> quebra</p></body></html>';
+    const epub = buildEpub({ chapters: [{ file: 'Text/c1.xhtml', xhtml }] });
+    const book = await parse(epub);
+    expect(book.chapters).toHaveLength(1);
+    expect(book.chapters[0].title).toBe('Capítulo preservado');
+    expect(book.chapters[0].blocks[1]).toMatchObject({ t: 'p', text: expect.stringContaining('Texto com') });
+  });
+
+  it('item de spine SVG extrai a imagem raster referenciada sem descartar a página (achado 4)', async () => {
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+      <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>HQ SVG</dc:title></metadata>
+        <manifest>
+          <item id="p1" href="Images/p1.svg" media-type="image/svg+xml"/>
+          <item id="img1" href="Images/p1.png" media-type="image/png"/>
+        </manifest>
+        <spine><itemref idref="p1"/></spine>
+      </package>`;
+    const svgPage =
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 600 900">' +
+      '<image width="100%" height="100%" xlink:href="p1.png"/></svg>';
+    const zip = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': strToU8(opf),
+      'OEBPS/Images/p1.svg': strToU8(svgPage),
+      'OEBPS/Images/p1.png': png(),
+    });
+    const book = await parse(zip);
+    expect(book.chapters).toHaveLength(1);
+    expect(book.chapters[0].blocks).toHaveLength(1);
+    expect(book.chapters[0].blocks[0]).toMatchObject({ t: 'img' });
+    expect(book.images.size).toBe(1);
+  });
+
+  it('sumário e imagens funcionam com caixa diferente e diretórios com # ou % (achado 8)', async () => {
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+      <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Caminhos</dc:title></metadata>
+        <manifest>
+          <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+          <item id="c1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>
+          <item id="c2" href="Ch%232/ch2.xhtml" media-type="application/xhtml+xml"/>
+          <item id="img" href="Images/fig%201.png" media-type="image/png"/>
+        </manifest>
+        <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
+      </package>`;
+    const nav = xhtmlDoc(
+      '<nav epub:type="toc"><ol><li><a href="text/ch1.xhtml">Capítulo Case-Insensitive</a></li></ol></nav>',
+    );
+    const zip = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': strToU8(opf),
+      'OEBPS/nav.xhtml': strToU8(nav),
+      'OEBPS/Text/ch1.xhtml': strToU8(xhtmlDoc('<p>Um</p><img src="../images/fig%201.png"/>')),
+      'OEBPS/Ch#2/ch2.xhtml': strToU8(xhtmlDoc('<p>Dois</p><img src="../Images/fig%201.png"/>')),
+      'OEBPS/Images/fig 1.png': png(),
+    });
+    const book = await parse(zip);
+    expect(book.chapters[0].title).toBe('Capítulo Case-Insensitive');
+    expect(book.images.size).toBe(1); // mesma imagem sem duplicar
+    const imgs1 = book.chapters[0].blocks.filter((b) => b.t === 'img');
+    const imgs2 = book.chapters[1].blocks.filter((b) => b.t === 'img');
+    expect(imgs1).toHaveLength(1);
+    expect(imgs2).toHaveLength(1);
+    if (imgs1[0].t === 'img' && imgs2[0].t === 'img') {
+      expect(imgs1[0].src).toBe(imgs2[0].src);
+    }
+  });
+
+  it('rejeita HTML/XHTML disfarçado de imagem, descarta SVG sem canvas com aviso e rasteriza SVG quando disponível (achado 12 e segurança)', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="50" height="50"><script>alert(1)</script><rect width="50" height="50" fill="red"/></svg>';
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+      <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Imagens</dc:title></metadata>
+        <manifest>
+          <item id="c1" href="Text/c1.xhtml" media-type="application/xhtml+xml"/>
+          <item id="falso" href="Images/falso.png" media-type="image/png"/>
+          <item id="vec" href="Images/desenho.svg" media-type="image/svg+xml"/>
+          <item id="capa" href="Images/capa.svg" media-type="image/svg+xml" properties="cover-image"/>
+        </manifest>
+        <spine><itemref idref="c1"/></spine>
+      </package>`;
+    const zip = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': strToU8(opf),
+      'OEBPS/Text/c1.xhtml': strToU8(
+        xhtmlDoc('<p>Texto</p><img src="../Images/falso.png"/><img src="../Images/desenho.svg"/><img src="c1.xhtml"/>'),
+      ),
+      'OEBPS/Images/falso.png': strToU8('<html><body>não é PNG</body></html>'),
+      'OEBPS/Images/desenho.svg': strToU8(svg),
+      'OEBPS/Images/capa.svg': strToU8(svg),
+    });
+
+    // Sem canvas (happy-dom): SVG é descartado e registrado em warnings; HTML falso é rejeitado
+    const semCanvas = await parse(zip);
+    expect(semCanvas.images.size).toBe(0);
+    expect(semCanvas.cover).toBeUndefined();
+    expect(semCanvas.chapters[0].blocks).toEqual([{ t: 'p', text: 'Texto' }]);
+    expect(semCanvas.warnings?.some((w) => /SVG/i.test(w))).toBe(true);
+
+    // Com rasterizador disponível: SVGs viram PNG (nunca image/svg+xml)
+    const pngFake = new Blob([png().slice()], { type: 'image/png' });
+    const comCanvas = await parseEpub(toBuf(zip), 'livro.epub', noop, {
+      rasterizeSvg: async () => pngFake,
+    });
+    expect(comCanvas.cover?.type).toBe('image/png');
+    expect(comCanvas.images.size).toBe(1);
+    for (const blob of comCanvas.images.values()) {
+      expect(blob.type).toBe('image/png');
+    }
+    expect(comCanvas.warnings).toBeUndefined();
+  });
+
+  it('emite aviso em warnings para EPUB pre-paginated com texto sem alterar fixedLayout (achado 12)', async () => {
+    const opf = `<?xml version="1.0" encoding="utf-8"?>
+      <package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+        <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+          <dc:title>Layout Fixo</dc:title>
+          <meta property="rendition:layout">pre-paginated</meta>
+        </metadata>
+        <manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest>
+        <spine><itemref idref="c1"/></spine>
+      </package>`;
+    const zipTexto = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': strToU8(opf),
+      'OEBPS/c1.xhtml': strToU8(xhtmlDoc('<p>Texto posicionado</p>')),
+    });
+    const bookTexto = await parse(zipTexto);
+    expect(bookTexto.fixedLayout).toBeUndefined();
+    expect(bookTexto.warnings?.some((w) => /pre-paginated|layout fixo/i.test(w))).toBe(true);
+
+    const zipSoImagem = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'OEBPS/content.opf': strToU8(opf),
+      'OEBPS/c1.xhtml': strToU8(xhtmlDoc('<img src="p1.png"/>')),
+      'OEBPS/p1.png': png(),
+    });
+    const bookSoImagem = await parse(zipSoImagem);
+    expect(bookSoImagem.fixedLayout).toBeUndefined();
+    expect(bookSoImagem.warnings).toBeUndefined();
+  });
+});

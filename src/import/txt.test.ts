@@ -104,3 +104,161 @@ describe('parseTxt', () => {
     expect(book.chapters.map((c) => c.title)).toEqual(['Parte 1', 'Parte 2', 'Parte 3']);
   });
 });
+
+describe('parseTxt: falsos positivos de capítulos e capítulos vazios (achado 5)', () => {
+  it('rejeita prosa iniciada por "Capítulo" e mantém títulos legítimos ("CAPÍTULO I", "Capítulo 1 - O começo")', () => {
+    const falsoPositivo = [
+      'Diário de Leituras',
+      '',
+      'Capítulo interessante aquele que lemos ontem na biblioteca.',
+      'Depois voltamos para casa comentando a narrativa.',
+    ].join('\n');
+    const semCaps = parseTxt(falsoPositivo, 'diario.txt');
+    expect(semCaps.chapters.flatMap((c) => c.blocks).filter((b) => b.t === 'h')).toEqual([]);
+
+    const legitimo = [
+      'Romance',
+      '',
+      'CAPÍTULO I',
+      '',
+      'Primeiro parágrafo.',
+      '',
+      'Capítulo 1 - O começo',
+      '',
+      'Segundo parágrafo.',
+    ].join('\n');
+    const comCaps = parseTxt(legitimo, 'romance.txt');
+    expect(comCaps.chapters.map((c) => c.title)).toEqual(['CAPÍTULO I', 'Capítulo 1 - O começo']);
+  });
+
+  it('rejeita "Introdução de novas técnicas..." em texto refluído e mantém "Introdução" isolada', () => {
+    const prosaRefluida = [
+      'Artigo Técnico',
+      '',
+      'Introdução de novas técnicas agrícolas no interior paulista mudou',
+      'profundamente a forma como pequenos produtores planejavam as safras',
+      'ao longo de toda a segunda metade do século passado naquela região.',
+      '',
+      'Outro parágrafo também quebrado em largura fixa de setenta colunas',
+      'para ativar o detector de refluxo e garantir que a primeira linha',
+      'acima não seja arrancada do parágrafo como título de capítulo.',
+    ].join('\n');
+    const bookProsa = parseTxt(prosaRefluida, 'artigo.txt');
+    expect(bookProsa.chapters.flatMap((c) => c.blocks).filter((b) => b.t === 'h')).toEqual([]);
+
+    const legitimo = ['Manual', '', 'Introdução', '', 'Texto introdutório.', '', 'Epílogo', '', 'Conclusão.'].join('\n');
+    expect(parseTxt(legitimo, 'manual.txt').chapters.map((c) => c.title)).toEqual(['Introdução', 'Epílogo']);
+  });
+
+  it('rejeita palavras minúsculas com letras de romanos ("civil", "mil", "vi") e mantém "PARTE II" e "I" isolado', () => {
+    const falsoPositivo = [
+      'Ensaio',
+      '',
+      'Parte civil do processo continuava parada no fórum.',
+      '',
+      'Livro mil vezes lido pela crítica literária.',
+      '',
+      'Parte vi da carta mencionava a viagem.',
+    ].join('\n');
+    expect(parseTxt(falsoPositivo, 'ensaio.txt').chapters.flatMap((c) => c.blocks).filter((b) => b.t === 'h')).toEqual([]);
+
+    const legitimo = ['Obra', '', 'PARTE II', '', 'Texto da parte.', '', 'I', '', 'Primeiro trecho.'].join('\n');
+    expect(parseTxt(legitimo, 'obra.txt').chapters.map((c) => c.title)).toEqual(['PARTE II', 'I']);
+  });
+
+  it('rejeita diálogos gritados em caixa alta e mantém títulos em caixa alta sem pontuação final', () => {
+    const dialogo = [
+      'Conto',
+      '',
+      'CAPÍTULO I',
+      '',
+      'Ele abriu a porta correndo.',
+      '',
+      '— NÃO!',
+      '',
+      '— SOCORRO!',
+      '',
+      'E então tudo ficou em silêncio.',
+    ].join('\n');
+    const bookDialogo = parseTxt(dialogo, 'conto.txt');
+    expect(bookDialogo.chapters.map((c) => c.title)).toEqual(['CAPÍTULO I']);
+    expect(bookDialogo.chapters[0].blocks.filter((b) => b.t === 'p').map((b) => b.text)).toContain('— NÃO!');
+    expect(bookDialogo.chapters[0].blocks.filter((b) => b.t === 'p').map((b) => b.text)).toContain('— SOCORRO!');
+
+    const legitimo = ['Conto', '', 'CAPÍTULO I', '', 'Começo.', '', 'PARTE FINAL', '', 'Desfecho.'].join('\n');
+    expect(parseTxt(legitimo, 'conto2.txt').chapters.map((c) => c.title)).toEqual(['CAPÍTULO I', 'PARTE FINAL']);
+  });
+
+  it('não cria capítulos vazios em folha de rosto em caixa alta nem em títulos seguidos no modo reflow', () => {
+    const folhaDeRosto = [
+      'DOM CASMURRO',
+      '',
+      'MACHADO DE ASSIS',
+      '',
+      'CAPÍTULO I',
+      '',
+      'Uma noite destas, vindo da cidade para o Engenho Novo.',
+      '',
+      'CAPÍTULO II',
+      '',
+      'Agora que expliquei o título, passo a escrever o livro.',
+    ].join('\n');
+    const book = parseTxt(folhaDeRosto, 'dom-casmurro.txt');
+    expect(book.title).toBe('DOM CASMURRO');
+    expect(book.chapters.map((c) => c.title)).toEqual(['CAPÍTULO I', 'CAPÍTULO II']);
+    expect(book.chapters.every((c) => c.blocks.some((b) => b.t === 'p'))).toBe(true);
+
+    const reflowSubtitulo = [
+      'CAPÍTULO I',
+      'DO TÍTULO',
+      '',
+      'Esta é a primeira linha de um parágrafo longo que foi quebrado em',
+      'largura fixa de aproximadamente setenta colunas para caber em telas',
+      'antigas de terminal sem quebra automática de linha no leitor.',
+      '',
+      'Já este segundo parágrafo também segue exatamente o mesmo padrão de',
+      'formatação com linhas de sessenta a oitenta caracteres separados por',
+      'uma linha em branco entre os parágrafos do texto original.',
+    ].join('\n');
+    const bookReflow = parseTxt(reflowSubtitulo, 'reflow.txt');
+    expect(bookReflow.chapters.map((c) => c.title)).toEqual(['CAPÍTULO I']);
+    expect(bookReflow.chapters[0].blocks.filter((b) => b.t === 'p')[0]).toEqual({ t: 'p', text: 'DO TÍTULO' });
+  });
+});
+
+describe('parseTxt: arquivos Markdown .md (achado 11)', () => {
+  it('reconhece cabeçalhos ATX (#, ##, ###) em .md e remove .md do título de fallback', () => {
+    const primeiraLonga =
+      'Esta primeira linha é propositalmente muito longa e ultrapassa o limite de oitenta caracteres para acionar o fallback.';
+    const md = [
+      primeiraLonga,
+      '',
+      '# Capítulo 1',
+      '',
+      'Texto do primeiro capítulo.',
+      '',
+      '## Introdução',
+      '',
+      'Detalhes da introdução.',
+      '',
+      '### Nota final ###',
+      '',
+      'Encerramento.',
+    ].join('\n');
+
+    const book = parseTxt(md, 'notas.md');
+    expect(book.title).toBe('notas');
+    expect(book.chapters.map((c) => c.title)).toEqual(['Capítulo 1', 'Introdução', 'Nota final']);
+    expect(book.chapters[0].blocks.find((b) => b.t === 'h')).toEqual({ t: 'h', level: 1, text: 'Capítulo 1' });
+    expect(book.chapters[1].blocks.find((b) => b.t === 'h')).toEqual({ t: 'h', level: 2, text: 'Introdução' });
+    expect(book.chapters[2].blocks.find((b) => b.t === 'h')).toEqual({ t: 'h', level: 3, text: 'Nota final' });
+    expect(parseTxt('\n', '.md').title).toBe('Sem título');
+  });
+
+  it('não trata cabeçalhos ATX (#, ##, ###) como capítulos em arquivos .txt', () => {
+    const txt = ['# Isto não é título Markdown', '', '## Nem isto', '', 'Texto comum.'].join('\n');
+    const book = parseTxt(txt, 'notas.txt');
+    expect(book.chapters.flatMap((c) => c.blocks).filter((b) => b.t === 'h')).toEqual([]);
+    expect(book.chapters[0].blocks[0]).toEqual({ t: 'p', text: '# Isto não é título Markdown' });
+  });
+});
