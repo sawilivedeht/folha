@@ -107,33 +107,21 @@ const CONTROL_CHAR_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g
 const BOLD_FONT_RE = /(?:bold|black|heavy|semibold|demibold|extrabold|ultrabold|(?:^|[-_+])(?:bd|demi)(?:$|[-_+]|mt|it|ob)|^cmbx)/i;
 const ITALIC_FONT_RE = /(?:italic|oblique|slant|(?:^|[-_+])(?:it|ob|ital)(?:$|[-_+]|mt)|^cm(?:ti|sl))/i;
 
-// Prefixos portugueses (e compostos clássicos) que sempre mantêm hífen segundo o Acordo Ortográfico.
+// Prefixos portugueses que sempre mantêm hífen segundo o Acordo Ortográfico
+// e não aparecem como sílaba inicial comum de palavras sem hífen.
 const ALWAYS_HYPHEN_PREFIXES = new Set([
-  'ex',
   'vice',
-  'pré',
-  'pós',
-  'pró',
   'recém',
   'além',
   'aquém',
   'grão',
   'grã',
   'soto',
-  'sota',
   'bem',
-  'mal',
-  'sem',
-  'beija',
-  'couve',
-  'arco',
-  'quebra',
-  'saca',
-  'tira',
-  'bate',
-  'pica',
-  'vira',
 ]);
+
+// Exceções raras sem hífen iniciadas por "pós-".
+const POS_NON_COMPOUND_SUFFIXES = new Set(['tero', 'tera', 'teros', 'teras', 'tumo', 'tuma', 'tumos', 'tumas']);
 
 // Prefixos que mantêm hífen apenas antes de 'h' ou da mesma vogal final.
 const SAME_VOWEL_OR_H_PREFIXES = new Set([
@@ -160,6 +148,66 @@ const R_OR_H_PREFIXES = new Set(['inter', 'hiper', 'super']);
 
 // Pares compostos frequentes em português (prefixo -> sufixos conhecidos).
 const KNOWN_COMPOUND_PAIRS: Record<string, Set<string>> = {
+  ex: new Set([
+    'presidente', 'presidentes', 'ministro', 'ministra', 'ministros', 'governador', 'governadora',
+    'prefeito', 'prefeita', 'senador', 'senadora', 'deputado', 'deputada', 'diretor', 'diretora',
+    'aluno', 'aluna', 'alunos', 'alunas', 'marido', 'esposa', 'mulher', 'namorado', 'namorada',
+    'companheiro', 'companheira', 'cônjuge', 'chefe', 'funcionário', 'funcionária', 'jogador',
+    'jogadora', 'técnico', 'treinador', 'professor', 'professora', 'colega', 'amigo', 'amiga',
+    'sócio', 'sócia', 'membro', 'combatente', 'detento', 'presidiário', 'fumante', 'militar',
+    'policial', 'agente', 'secretário', 'secretária', 'juiz', 'juíza', 'procurador', 'embaixador',
+    'rei', 'rainha', 'imperador', 'papa', 'padre', 'líder', 'campeão', 'campeã', 'titular',
+    'morador', 'moradora', 'dono', 'dona', 'proprietário', 'cliente', 'parceiro', 'parceira',
+    'patrão', 'empregado', 'servidor', 'escravo', 'colônia', 'colônias', 'república',
+  ]),
+  pré: new Set([
+    'história', 'histórico', 'histórica', 'históricos', 'históricas', 'natal', 'escolar', 'escola',
+    'vestibular', 'requisito', 'requisitos', 'pago', 'paga', 'pagos', 'pagas', 'venda', 'vendas',
+    'estreia', 'estréia', 'lançamento', 'candidato', 'candidata', 'candidatos', 'candidatura',
+    'temporada', 'olímpico', 'olímpica', 'adolescente', 'adolescência', 'primário', 'sal',
+    'colombiano', 'colombiana', 'moderno', 'moderna', 'industrial', 'guerra', 'operatório',
+    'operatória', 'existente', 'existentes', 'estabelecido', 'estabelecida', 'definido', 'definida',
+    'determinado', 'determinada', 'aprovado', 'aprovada', 'selecionado', 'selecionada', 'seleção',
+    'moldado', 'moldada', 'fabricado', 'fabricada', 'cozido', 'cozida', 'aquecido', 'aquecida',
+    'datado', 'datada', 'socrático', 'socrática', 'socráticos', 'clássico', 'clássica',
+    'científico', 'científica', 'conceito', 'conceitos', 'julgamento', 'aviso', 'acordo',
+    'contrato', 'projeto', 'texto', 'fixo', 'diabetes', 'eclâmpsia', 'menstrual', 'parto',
+    'teste', 'treino', 'jogo', 'eliminatória', 'final', 'festa', 'carnaval', 'campanha',
+    'eleitoral', 'registro', 'inscrição', 'matrícula', 'reserva', 'análise', 'diagnóstico',
+    'tratamento', 'consulta', 'exame', 'alta', 'crise', 'reforma', 'revolução', 'pandemia',
+  ]),
+  pró: new Set([
+    'vida', 'aborto', 'ativo', 'ativa', 'ativos', 'ativas', 'atividade', 'reitor', 'reitora',
+    'reitoria', 'labore', 'forma', 'rata', 'memória', 'tempore', 'democracia', 'governo',
+    'mercado', 'europa', 'europeu', 'americano', 'americana', 'ocidental', 'independência',
+    'ambiente', 'família', 'imigrante', 'ciência', 'vacina', 'direitos', 'saúde', 'cota', 'cotas',
+    'reforma', 'trabalho', 'trabalhador',
+  ]),
+  sem: new Set([
+    'terra', 'teto', 'vergonha', 'fim', 'número', 'cerimônia', 'abrigo', 'sal', 'sabor',
+    'pulo', 'família', 'pátria', 'jeito', 'noção', 'razão', 'rumo', 'senso', 'volta', 'saída',
+  ]),
+  mal: new Set(['me', 'cheiroso']),
+  sota: new Set(['piloto', 'mestre', 'capitão', 'patrão']),
+  beija: new Set(['flor', 'flores', 'mão', 'mãos']),
+  couve: new Set(['flor', 'flores', 'manteiga']),
+  arco: new Set(['íris']),
+  quebra: new Set([
+    'cabeça', 'cabeças', 'mar', 'mares', 'nozes', 'molas', 'mola', 'galho', 'galhos',
+    'queixo', 'sol', 'luz', 'vento', 'gelo', 'costela', 'ossos', 'pedra', 'pedras', 'pau',
+    'prato', 'quebra',
+  ]),
+  saca: new Set(['rolhas', 'rolha', 'rabo', 'trapo', 'buxa', 'fundo', 'moedas', 'pregos']),
+  tira: new Set([
+    'gosto', 'gostos', 'teima', 'teimas', 'manchas', 'mancha', 'dúvidas', 'dúvida',
+    'linhas', 'prosa', 'cisma', 'pó', 'leite', 'fino', 'onda', 'peles', 'olhos',
+  ]),
+  bate: new Set([
+    'papo', 'papos', 'boca', 'bocas', 'volta', 'estaca', 'estacas', 'bate', 'bola',
+    'chapa', 'coxa', 'fundo', 'entope', 'folha', 'pau', 'pé', 'orelha',
+  ]),
+  pica: new Set(['pau', 'paus', 'fumo', 'flor', 'pedra', 'peixe', 'osso', 'boi']),
+  vira: new Set(['lata', 'latas', 'casaca', 'casacas', 'mundo', 'folha', 'mão', 'cara', 'copos', 'olhos', 'saia']),
   segunda: new Set(['feira', 'feiras']),
   terça: new Set(['feira', 'feiras']),
   quarta: new Set(['feira', 'feiras']),
@@ -212,15 +260,45 @@ const KNOWN_COMPOUND_PAIRS: Record<string, Set<string>> = {
 
 const CLITIC_LO_SET = new Set(['lo', 'la', 'los', 'las']);
 const CLITIC_LHE_SET = new Set(['lhe', 'lhes']);
-const CLITIC_SE_SET = new Set(['se', 'me', 'te', 'nos', 'vos']);
+const CLITIC_ME_TE_SET = new Set(['me', 'te']);
+const CLITIC_NOS_VOS_SET = new Set(['nos', 'vos']);
 
-/** Normaliza ligaduras, espaços estranhos e caracteres de controle. */
+// Palavras inteiras terminadas em -se/-lhe/-te/-nos/-me/-vos que não são verbo + clítico.
+const NON_CLITIC_SE_WORDS = new Set([
+  'fase', 'base', 'frase', 'crase', 'quase', 'ênfase', 'êxtase',
+  'atrase', 'arrase', 'embase', 'defase', 'converse', 'disperse',
+  'paráfrase', 'perífrase', 'metástase', 'síntase', 'hipóstase', 'diástase',
+  'síntese', 'hipótese', 'prótese', 'antítese', 'parêntese', 'gênese',
+  'diocese', 'catequese', 'exegese', 'anamnese', 'diurese', 'ascese',
+  'mímese', 'diérese', 'sinérese', 'epêntese', 'metátese', 'aférese',
+]);
+const NON_CLITIC_SE_SUFFIX_RE = /(?:sínte|gêne|próte|hipóte|antíte|parênte)se$/;
+const NON_CLITIC_LHE_WORDS = new Set(['baralhe', 'baralhes', 'embaralhe', 'embaralhes']);
+const NON_CLITIC_OBJ_WORDS = new Set([
+  'parte', 'aparte', 'reparte', 'descarte', 'infarte', 'marte',
+  'alerte', 'aperte', 'acerte', 'conserte', 'desperte', 'deserte', 'disserte',
+  'enxerte', 'oferte', 'adverte', 'converte', 'diverte', 'inverte', 'perverte',
+  'reverte', 'subverte', 'inserte',
+  'leite', 'azeite', 'aceite', 'respeite', 'suspeite', 'aproveite', 'enfeite',
+  'rejeite', 'sujeite', 'ajeite', 'deleite', 'espreite', 'deite', 'endireite', 'estreite',
+  'noite', 'açoite', 'pernoite',
+  'trate', 'contrate', 'retrate', 'maltrate', 'hidrate', 'desidrate', 'desbarate',
+  'modernos', 'eternos', 'internos', 'externos', 'paternos', 'maternos', 'fraternos',
+  'invernos', 'governos', 'cadernos', 'infernos', 'alternos', 'subalternos', 'ternos',
+  'supernos', 'hodiernos', 'quaternos',
+  'firme', 'alarme', 'charme', 'germe', 'desarme', 'rearme', 'inerme',
+  'queime', 'teime', 'derrame', 'trame',
+  'acervos', 'cervos', 'servos', 'nervos', 'parvos', 'cravos', 'bravos', 'escravos',
+]);
+
+/** Normaliza ligaduras, espaços estranhos, caracteres de controle e composição Unicode (NFC). */
 export function normalizePdfText(str: string): string {
   return str
     .replace(LIGATURE_RE, (ch) => LIGATURES[ch] ?? ch)
     .replace(ZERO_WIDTH_RE, '')
     .replace(CONTROL_CHAR_RE, '')
-    .replace(WEIRD_SPACE_RE, ' ');
+    .replace(WEIRD_SPACE_RE, ' ')
+    .normalize('NFC');
 }
 
 function stripSoftHyphens(str: string): string {
@@ -417,15 +495,19 @@ function buildLayoutLine(
     }
 
     // Deduplica "fake bold" por sobreimpressão idêntica na mesma posição.
-    if (
-      prevVisible &&
-      it.str === prevVisible.str &&
-      Math.abs(it.x - prevVisible.x) < 1.5 &&
-      Math.abs(it.yTop - prevVisible.yTop) < 1.5
-    ) {
-      const lastSpan = spans[spans.length - 1];
-      if (lastSpan) lastSpan.b = 1;
-      continue;
+    // Compara dx com a largura do item anterior para não apagar letras estreitas dobradas ("ii", "ll").
+    if (prevVisible && it.str === prevVisible.str) {
+      const maxDx = prevVisible.w > 0 ? Math.min(1.0, prevVisible.w * 0.35) : 0.5;
+      const maxDy = Math.min(1.5, Math.max(0.5, prevVisible.h * 0.2));
+      if (Math.abs(it.x - prevVisible.x) < maxDx && Math.abs(it.yTop - prevVisible.yTop) < maxDy) {
+        const lastSpan = spans[spans.length - 1];
+        if (lastSpan) lastSpan.b = 1;
+        if (!prevVisible.bold) {
+          boldChars += prevVisible.str.trim().length;
+          prevVisible = { ...(prevVisible as NormItem), bold: true };
+        }
+        continue;
+      }
     }
 
     let text = it.str.replace(/ {2,}/g, ' ');
@@ -494,6 +576,8 @@ function buildLayoutLine(
 
 interface ColumnSplit {
   splitX: number;
+  gutterMinGap: number;
+  medianGap: number;
   leftMin: number;
   leftMax: number;
   rightMin: number;
@@ -579,6 +663,17 @@ function detectTwoColumns(rows: RawRow[], pageWidth: number, pageHeight: number)
         continue;
       }
 
+      if (rLeftMax > -Infinity && rRightMin < Infinity) {
+        const gap = rRightMin - rLeftMax;
+        if (gap < gutterMinGap) {
+          // Itens nos dois lados separados por espaço normal entre palavras formam linha contínua.
+          crossingRows++;
+          continue;
+        }
+        dualRows++;
+        gaps.push(gap);
+      }
+
       if (rLeftMax > -Infinity) {
         if (rLeftMin < leftMin) leftMin = rLeftMin;
         if (rLeftMax > leftMax) leftMax = rLeftMax;
@@ -586,14 +681,6 @@ function detectTwoColumns(rows: RawRow[], pageWidth: number, pageHeight: number)
       if (rRightMin < Infinity) {
         if (rRightMin < rightMin) rightMin = rRightMin;
         if (rRightMax > rightMax) rightMax = rRightMax;
-      }
-
-      if (rLeftMax > -Infinity && rRightMin < Infinity) {
-        const gap = rRightMin - rLeftMax;
-        if (gap >= gutterMinGap) {
-          dualRows++;
-          gaps.push(gap);
-        }
       }
     }
 
@@ -627,6 +714,8 @@ function detectTwoColumns(rows: RawRow[], pageWidth: number, pageHeight: number)
   if (!best) return null;
   return {
     splitX: best.splitX,
+    gutterMinGap,
+    medianGap: best.medianGap,
     leftMin: best.leftMin,
     leftMax: best.leftMax,
     rightMin: best.rightMin,
@@ -687,9 +776,34 @@ function extractPageLines(page: PdfPageInput, yOrigin: 'pdf' | 'top-down'): Layo
   };
 
   for (const r of rows) {
-    const crosses = r.items.some(
-      (it) => !it.rawWhitespaceOnly && it.x + 1 < colSplit.splitX && it.x + it.w - 1 > colSplit.splitX,
-    );
+    let crosses = false;
+    let rLeftMax = -Infinity;
+    let rRightMin = Infinity;
+
+    for (const it of r.items) {
+      if (it.rawWhitespaceOnly) continue;
+      const x1 = it.x;
+      const x2 = it.x + it.w;
+      if (x1 + 1 < colSplit.splitX && x2 - 1 > colSplit.splitX) {
+        crosses = true;
+        break;
+      }
+      if (x2 <= colSplit.splitX + 1) {
+        if (x2 > rLeftMax) rLeftMax = x2;
+      } else if (x1 >= colSplit.splitX - 1) {
+        if (x1 < rRightMin) rRightMin = x1;
+      }
+    }
+
+    if (!crosses && rLeftMax > -Infinity && rRightMin < Infinity) {
+      // Itens nos dois lados da calha com espaço de palavra entre si formam linha de largura total.
+      const rowGap = rRightMin - rLeftMax;
+      const crossGapLimit = Math.min(colSplit.medianGap * 0.75, Math.max(colSplit.gutterMinGap, r.maxH * 0.75));
+      if (rowGap < crossGapLimit) {
+        crosses = true;
+      }
+    }
+
     if (crosses) {
       flushBand();
       const line = buildLayoutLine(r.items, page.pageNumber, page.height, pageMinX, pageMaxX, 0);
@@ -708,18 +822,81 @@ function extractPageLines(page: PdfPageInput, yOrigin: 'pdf' | 'top-down'): Layo
   return lines;
 }
 
-const STANDALONE_PAGE_NUM_RE = /^[-–—·•|\[\]()\s]*(?:(?:p(?:ág|ag|age)?\.?\s*)?\d{1,5}(?:\s*(?:\/|de|of)\s*\d{1,5})?)[-–—·•|\[\]()\s]*$/i;
-const ROMAN_PAGE_NUM_RE = /^[-–—\s]*(?=[ivxlcdm]+$)m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})[-–—\s]*$/i;
+const HEADER_FOOTER_ZONE = 0.11;
+const Y_CLUSTER_TOL = 0.015;
 
-function isStandalonePageNumber(line: LayoutLine, bodyFontSize: number): boolean {
-  const text = stripSoftHyphens(line.text).trim();
-  if (text.length === 0 || text.length > 24) return false;
-  if (line.fontSize > bodyFontSize * 1.15) return false;
-  const inTopOrBottom = line.yTop <= line.pageHeight * 0.14 || line.yTop >= line.pageHeight * 0.86;
-  if (!inTopOrBottom) return false;
-  if (STANDALONE_PAGE_NUM_RE.test(text)) return true;
-  if (text.length <= 7 && ROMAN_PAGE_NUM_RE.test(text)) return true;
-  return false;
+const DECORATED_ARABIC_PAGE_NUM_RE =
+  /^(?:[-–—·•|\[\]()\s]*(?:p(?:ág|ag|age)?\.?\s*\d{1,5}(?:\s*(?:\/|de|of)\s*\d{1,5})?|\d{1,5}\s*(?:\/|de|of)\s*\d{1,5})[-–—·•|\[\]()\s]*|[-–—·•|\[\](]+\s*\d{1,5}\s*[-–—·•|\[\])]+)$/i;
+const BARE_ARABIC_PAGE_NUM_RE = /^\d{1,5}$/;
+const DECORATED_ROMAN_WRAP_RE = /^[-–—·•|\[\](]+\s*([ivxlc]+|[IVXLC]+)\s*[-–—·•|\[\])]+$/;
+const BARE_ROMAN_RE = /^(?:[ivxlc]+|[IVXLC]+)$/;
+// Restringe romanos de paginação a 1..100 para evitar falsos positivos como "CD", "cm", "di" e "mix".
+const VALID_ROMAN_1_TO_100_RE = /^(?:c|(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3}))$/;
+
+function romanToInt(roman: string): number {
+  const lower = roman.toLowerCase();
+  if (!lower || !VALID_ROMAN_1_TO_100_RE.test(lower)) return 0;
+  const vals: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100 };
+  let total = 0;
+  for (let i = 0; i < lower.length; i++) {
+    const cur = vals[lower[i]] ?? 0;
+    const next = i + 1 < lower.length ? (vals[lower[i + 1]] ?? 0) : 0;
+    total += cur < next ? -cur : cur;
+  }
+  return total;
+}
+
+interface ParsedPageNum {
+  kind: 'arabic' | 'roman';
+  value: number;
+  decorated: boolean;
+}
+
+function parseStandalonePageNumber(text: string): ParsedPageNum | null {
+  const clean = stripSoftHyphens(text).trim();
+  if (clean.length === 0 || clean.length > 24) return null;
+
+  if (DECORATED_ARABIC_PAGE_NUM_RE.test(clean)) {
+    const numMatch = clean.match(/\d{1,5}/);
+    if (numMatch) return { kind: 'arabic', value: Number(numMatch[0]), decorated: true };
+  }
+  if (BARE_ARABIC_PAGE_NUM_RE.test(clean)) {
+    return { kind: 'arabic', value: Number(clean), decorated: false };
+  }
+
+  const decRoman = clean.match(DECORATED_ROMAN_WRAP_RE);
+  if (decRoman) {
+    const val = romanToInt(decRoman[1]);
+    if (val > 0) return { kind: 'roman', value: val, decorated: true };
+  }
+  if (clean.length <= 7 && BARE_ROMAN_RE.test(clean)) {
+    const val = romanToInt(clean);
+    if (val > 0) return { kind: 'roman', value: val, decorated: false };
+  }
+
+  return null;
+}
+
+interface YBand {
+  yTop: number;
+  lines: LayoutLine[];
+}
+
+/** Agrupa linhas de uma página em faixas horizontais ordenadas por yTop (independe de 2 colunas). */
+function groupPageLinesByY(lines: LayoutLine[], bodyFontSize: number): YBand[] {
+  if (lines.length === 0) return [];
+  const sorted = lines.slice().sort((a, b) => a.yTop - b.yTop || a.x - b.x);
+  const tol = Math.max(4, bodyFontSize * 0.5);
+  const bands: YBand[] = [];
+  for (const ln of sorted) {
+    const last = bands[bands.length - 1];
+    if (last && Math.abs(ln.yTop - last.yTop) <= tol) {
+      last.lines.push(ln);
+    } else {
+      bands.push({ yTop: ln.yTop, lines: [ln] });
+    }
+  }
+  return bands;
 }
 
 /** Chave normalizada de cabeçalho/rodapé ignorando números e pontuação de borda. */
@@ -736,93 +913,250 @@ function headerFooterKey(text: string): string {
 function stripHeadersFootersAndPageNumbers(
   pagesLines: LayoutLine[][],
   bodyFontSize: number,
+  normalStep: number,
 ): LayoutLine[][] {
   const totalPages = pagesLines.length;
-  const topCounts = new Map<string, Set<number>>();
-  const bottomCounts = new Map<string, Set<number>>();
+  const sepThreshold = Math.max(normalStep * 1.32, bodyFontSize * 1.65);
+
+  const pageTopCands: Array<Set<LayoutLine>> = [];
+  const pageBotCands: Array<Set<LayoutLine>> = [];
+  const pageBodyMinYRel: number[] = [];
+  const pageBodyMaxYRel: number[] = [];
+
+  interface KeyOcc {
+    pageNumber: number;
+    yRel: number;
+  }
+  interface BarePageNumOcc {
+    pageNumber: number;
+    yRel: number;
+    kind: 'arabic' | 'roman';
+    offset: number;
+    line: LayoutLine;
+    isTop: boolean;
+  }
+
+  const topOccs = new Map<string, KeyOcc[]>();
+  const botOccs = new Map<string, KeyOcc[]>();
+  const decoratedPageNums = new Set<LayoutLine>();
+  const barePageNumOccs: BarePageNumOcc[] = [];
 
   for (let pi = 0; pi < totalPages; pi++) {
     const lines = pagesLines[pi];
+    const topCands = new Set<LayoutLine>();
+    const botCands = new Set<LayoutLine>();
+    pageTopCands.push(topCands);
+    pageBotCands.push(botCands);
     if (lines.length === 0) continue;
+
     const pageNum = lines[0].pageNumber;
+    const pageHeight = lines[0].pageHeight;
+    const topZoneY = pageHeight * HEADER_FOOTER_ZONE;
+    const botZoneY = pageHeight * (1 - HEADER_FOOTER_ZONE);
+    const bands = groupPageLinesByY(lines, bodyFontSize);
 
-    // Candidatos no topo (primeiras 2 linhas dentro de 14% superior).
-    const topLimit = Math.min(2, lines.length);
-    for (let i = 0; i < topLimit; i++) {
-      const ln = lines[i];
-      if (ln.yTop > ln.pageHeight * 0.14 || ln.fontSize > bodyFontSize * 1.15) continue;
-      const key = headerFooterKey(ln.text);
-      if (key.length > 0 && key.length <= 120) {
-        let set = topCounts.get(key);
-        if (!set) {
-          set = new Set();
-          topCounts.set(key, set);
+    // Seleciona candidatos no topo por yTop (funciona também em páginas de 2 colunas).
+    if (bands.length > 0 && bands[0].yTop <= topZoneY) {
+      if (bands.length === 1) {
+        for (const ln of bands[0].lines) {
+          if (ln.fontSize <= bodyFontSize * 1.15) topCands.add(ln);
         }
-        set.add(pageNum);
-      }
-    }
-
-    // Candidatos no rodapé (últimas 2 linhas dentro de 14% inferior).
-    const botStart = Math.max(0, lines.length - 2);
-    for (let i = botStart; i < lines.length; i++) {
-      const ln = lines[i];
-      if (ln.yTop < ln.pageHeight * 0.86 || ln.fontSize > bodyFontSize * 1.15) continue;
-      const key = headerFooterKey(ln.text);
-      if (key.length > 0 && key.length <= 120) {
-        let set = bottomCounts.get(key);
-        if (!set) {
-          set = new Set();
-          bottomCounts.set(key, set);
-        }
-        set.add(pageNum);
-      }
-    }
-  }
-
-  const repeatedTop = new Set<string>();
-  const repeatedBottom = new Set<string>();
-
-  if (totalPages >= 3) {
-    const globalMin = Math.max(2, Math.ceil(totalPages * 0.25));
-    const checkRepeated = (counts: Map<string, Set<number>>, target: Set<string>) => {
-      for (const [key, pageSet] of counts) {
-        if (pageSet.size >= globalMin) {
-          target.add(key);
-          continue;
-        }
-        // Cabeçalhos correntes por capítulo em livros longos (ex.: >= 3 páginas próximas).
-        if (totalPages >= 10 && pageSet.size >= 3) {
-          const sortedPages = Array.from(pageSet).sort((a, b) => a - b);
-          for (let i = 0; i + 2 < sortedPages.length; i++) {
-            if (sortedPages[i + 2] - sortedPages[i] <= 8) {
-              target.add(key);
-              break;
+      } else {
+        const gap01 = bands[1].yTop - bands[0].yTop;
+        if (gap01 >= sepThreshold) {
+          for (const ln of bands[0].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) topCands.add(ln);
+          }
+        } else if (
+          bands[1].yTop <= topZoneY &&
+          ((bands.length >= 3 && bands[2].yTop - bands[1].yTop >= sepThreshold) ||
+            (bands.length === 2 && bands[0].yTop <= pageHeight * 0.07))
+        ) {
+          for (const ln of bands[0].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) topCands.add(ln);
+          }
+          for (const ln of bands[1].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) topCands.add(ln);
+          }
+        } else {
+          for (const ln of bands[0].lines) {
+            if (ln.fontSize <= bodyFontSize * 0.92 && ln.yTop <= pageHeight * 0.08) {
+              topCands.add(ln);
             }
           }
         }
       }
-    };
-    checkRepeated(topCounts, repeatedTop);
-    checkRepeated(bottomCounts, repeatedBottom);
-  }
+    }
 
-  return pagesLines.map((lines) =>
-    lines.filter((ln, idx) => {
-      if (isStandalonePageNumber(ln, bodyFontSize)) return false;
+    // Seleciona candidatos no rodapé por yTop.
+    const lastIdx = bands.length - 1;
+    if (lastIdx >= 0 && bands[lastIdx].yTop >= botZoneY) {
+      if (bands.length === 1) {
+        for (const ln of bands[lastIdx].lines) {
+          if (ln.fontSize <= bodyFontSize * 1.15) botCands.add(ln);
+        }
+      } else {
+        const gapLast = bands[lastIdx].yTop - bands[lastIdx - 1].yTop;
+        if (gapLast >= sepThreshold) {
+          for (const ln of bands[lastIdx].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) botCands.add(ln);
+          }
+        } else if (
+          bands[lastIdx - 1].yTop >= botZoneY &&
+          ((bands.length >= 3 && bands[lastIdx - 1].yTop - bands[lastIdx - 2].yTop >= sepThreshold) ||
+            (bands.length === 2 && bands[lastIdx].yTop >= pageHeight * 0.93))
+        ) {
+          for (const ln of bands[lastIdx - 1].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) botCands.add(ln);
+          }
+          for (const ln of bands[lastIdx].lines) {
+            if (ln.fontSize <= bodyFontSize * 1.15) botCands.add(ln);
+          }
+        } else {
+          for (const ln of bands[lastIdx].lines) {
+            if (ln.fontSize <= bodyFontSize * 0.92 && ln.yTop >= pageHeight * 0.92) {
+              botCands.add(ln);
+            }
+          }
+        }
+      }
+    }
 
-      if (idx < 2 && ln.yTop <= ln.pageHeight * 0.14 && ln.fontSize <= bodyFontSize * 1.15) {
-        const key = headerFooterKey(ln.text);
-        if (key.length > 0 && repeatedTop.has(key)) return false;
+    // Registra a faixa vertical ocupada pelo corpo real da página.
+    let minBodyY = Infinity;
+    let maxBodyY = -Infinity;
+    for (const ln of lines) {
+      if (topCands.has(ln) || botCands.has(ln)) continue;
+      if (Math.abs(ln.fontSize - bodyFontSize) > bodyFontSize * 0.25) continue;
+      const yRel = ln.yTop / pageHeight;
+      if (yRel < minBodyY) minBodyY = yRel;
+      if (yRel > maxBodyY) maxBodyY = yRel;
+    }
+    if (minBodyY < Infinity) pageBodyMinYRel.push(minBodyY);
+    if (maxBodyY > -Infinity) pageBodyMaxYRel.push(maxBodyY);
+
+    const recordCandidate = (ln: LayoutLine, isTop: boolean) => {
+      const yRel = ln.yTop / pageHeight;
+      const parsedNum = parseStandalonePageNumber(ln.text);
+      if (parsedNum) {
+        if (parsedNum.decorated) {
+          decoratedPageNums.add(ln);
+        } else {
+          barePageNumOccs.push({
+            pageNumber: pageNum,
+            yRel,
+            kind: parsedNum.kind,
+            offset: parsedNum.value - pageNum,
+            line: ln,
+            isTop,
+          });
+        }
       }
 
-      if (idx >= lines.length - 2 && ln.yTop >= ln.pageHeight * 0.86 && ln.fontSize <= bodyFontSize * 1.15) {
+      const key = headerFooterKey(ln.text);
+      if (key.length > 0 && key.length <= 120) {
+        const map = isTop ? topOccs : botOccs;
+        let list = map.get(key);
+        if (!list) {
+          list = [];
+          map.set(key, list);
+        }
+        list.push({ pageNumber: pageNum, yRel });
+      }
+    };
+
+    for (const ln of topCands) recordCandidate(ln, true);
+    for (const ln of botCands) recordCandidate(ln, false);
+  }
+
+  const bodyConflictMin = Math.max(2, Math.ceil(totalPages * 0.25));
+  const isInsideTopBody = (yRel: number): boolean =>
+    pageBodyMinYRel.filter((y) => y <= yRel + 0.008).length >= bodyConflictMin;
+  const isInsideBotBody = (yRel: number): boolean =>
+    pageBodyMaxYRel.filter((y) => y >= yRel - 0.008).length >= bodyConflictMin;
+
+  // Confirma números de página sem adorno apenas quando formam sequência coerente no mesmo yTop.
+  const confirmedBarePageNums = new Set<LayoutLine>();
+  for (const occ of barePageNumOccs) {
+    if (occ.isTop ? isInsideTopBody(occ.yRel) : isInsideBotBody(occ.yRel)) continue;
+    const matchingPages = new Set<number>();
+    for (const other of barePageNumOccs) {
+      if (
+        other.kind === occ.kind &&
+        other.offset === occ.offset &&
+        Math.abs(other.yRel - occ.yRel) <= Y_CLUSTER_TOL
+      ) {
+        matchingPages.add(other.pageNumber);
+      }
+    }
+    if (matchingPages.size >= 2) {
+      confirmedBarePageNums.add(occ.line);
+    }
+  }
+
+  // Detecta cabeçalhos/rodapés repetidos exigindo consistência na coordenada vertical (yRel).
+  const repeatedTopYs = new Map<string, number[]>();
+  const repeatedBotYs = new Map<string, number[]>();
+
+  if (totalPages >= 3) {
+    const globalMin = Math.max(2, Math.ceil(totalPages * 0.25));
+    const checkRepeated = (
+      occsMap: Map<string, KeyOcc[]>,
+      target: Map<string, number[]>,
+      insideBody: (yRel: number) => boolean,
+    ) => {
+      for (const [key, occs] of occsMap) {
+        const validYs: number[] = [];
+        for (const anchor of occs) {
+          if (insideBody(anchor.yRel)) continue;
+          const clusterPages = new Set<number>();
+          for (const other of occs) {
+            if (Math.abs(other.yRel - anchor.yRel) <= Y_CLUSTER_TOL) {
+              clusterPages.add(other.pageNumber);
+            }
+          }
+          let isRep = clusterPages.size >= globalMin;
+          // Cabeçalhos correntes por capítulo em livros longos (>= 3 páginas próximas no mesmo yTop).
+          if (!isRep && totalPages >= 10 && clusterPages.size >= 3) {
+            const sortedPages = Array.from(clusterPages).sort((a, b) => a - b);
+            for (let i = 0; i + 2 < sortedPages.length; i++) {
+              if (sortedPages[i + 2] - sortedPages[i] <= 8) {
+                isRep = true;
+                break;
+              }
+            }
+          }
+          if (isRep) validYs.push(anchor.yRel);
+        }
+        if (validYs.length > 0) target.set(key, validYs);
+      }
+    };
+    checkRepeated(topOccs, repeatedTopYs, isInsideTopBody);
+    checkRepeated(botOccs, repeatedBotYs, isInsideBotBody);
+  }
+
+  return pagesLines.map((lines, pi) => {
+    const topCands = pageTopCands[pi];
+    const botCands = pageBotCands[pi];
+    return lines.filter((ln) => {
+      if (decoratedPageNums.has(ln) || confirmedBarePageNums.has(ln)) return false;
+
+      const yRel = ln.yTop / ln.pageHeight;
+      if (topCands.has(ln)) {
         const key = headerFooterKey(ln.text);
-        if (key.length > 0 && repeatedBottom.has(key)) return false;
+        const ys = repeatedTopYs.get(key);
+        if (ys && ys.some((cy) => Math.abs(yRel - cy) <= Y_CLUSTER_TOL)) return false;
+      }
+
+      if (botCands.has(ln)) {
+        const key = headerFooterKey(ln.text);
+        const ys = repeatedBotYs.get(key);
+        if (ys && ys.some((cy) => Math.abs(yRel - cy) <= Y_CLUSTER_TOL)) return false;
       }
 
       return true;
-    }),
-  );
+    });
+  });
 }
 
 /** Decide se uma quebra com hífen deve manter o hífen (palavra composta/clítico) ou desifenizar. */
@@ -835,10 +1169,18 @@ function shouldKeepHyphen(prefix: string, suffix: string, isSuffixWholeWord: boo
   const prefixAllUpper = prefix.length >= 2 && prefix === prefix.toUpperCase() && /\p{L}/u.test(prefix);
   if (suffixStartsUpper && !prefixAllUpper) return true;
 
-  // Prefixos sempre hifenizados (ex-, vice-, bem-, pós-, pré-, recém-...).
+  // Prefixos sempre hifenizados (vice-, bem-, recém-, além-...).
   if (ALWAYS_HYPHEN_PREFIXES.has(lowerPrefix)) return true;
 
-  // Pares compostos conhecidos (segunda-feira, guarda-chuva, obra-prima...).
+  // "pós-" mantém hífen salvo em palavras derivadas raras como "póstero" e "póstumo".
+  if (lowerPrefix === 'pós' && !POS_NON_COMPOUND_SUFFIXES.has(lowerSuffix)) return true;
+
+  // "mal-" mantém hífen antes de vogal, 'h' ou 'l' (Acordo Ortográfico: mal-estar, mal-humorado, mal-limpo).
+  if (lowerPrefix === 'mal' && lowerSuffix.length >= 3 && /^[aeiouáéíóúâêôãõhl]/u.test(lowerSuffix)) {
+    return true;
+  }
+
+  // Pares compostos conhecidos (segunda-feira, guarda-chuva, ex-presidente, pré-história...).
   const pairSet = KNOWN_COMPOUND_PAIRS[lowerPrefix];
   if (pairSet && pairSet.has(lowerSuffix)) return true;
 
@@ -861,16 +1203,58 @@ function shouldKeepHyphen(prefix: string, suffix: string, isSuffixWholeWord: boo
     if (firstChar === 'b' || firstChar === 'h' || firstChar === 'r') return true;
   }
 
-  // Pronomes clíticos em português (fazê-lo, disse-lhe, tornou-se).
+  // Pronomes clíticos em português (fazê-lo, disse-lhe, trata-se, pode-se, vê-se, tornou-se).
   if (isSuffixWholeWord) {
+    const combined = lowerPrefix + lowerSuffix;
+
     if (CLITIC_LO_SET.has(lowerSuffix) && /[áêîô]$/.test(lowerPrefix)) return true;
-    if (CLITIC_LHE_SET.has(lowerSuffix) && lowerPrefix.length >= 3) return true;
-    if (
-      CLITIC_SE_SET.has(lowerSuffix) &&
-      lowerPrefix.length >= 3 &&
-      /(?:[aei]r|[aeo]u|[ae]m|ão|ia|va|ra|sse|ndo|mos|ei|oi|iz|az|ez)$/.test(lowerPrefix)
-    ) {
-      return true;
+
+    if (lowerSuffix === 'se') {
+      if (NON_CLITIC_SE_WORDS.has(combined) || NON_CLITIC_SE_SUFFIX_RE.test(combined)) return false;
+      if (lowerPrefix.length >= 2 && /(?:[áê]|põe|pôs|ri)$/.test(lowerPrefix)) return true;
+      if (
+        lowerPrefix.length >= 3 &&
+        /(?:[aei]r|pôr|[aeio]u|[aeéê]m|ão|õe|ói|ui|sse|ndo|mos|ei|oi|[iaeu]z|ôs|a|e)$/.test(lowerPrefix)
+      ) {
+        return true;
+      }
+    }
+
+    if (CLITIC_LHE_SET.has(lowerSuffix)) {
+      if (NON_CLITIC_LHE_WORDS.has(combined)) return false;
+      if (lowerPrefix.length >= 2 && /^(?:dá|vê|põe|deu|fez|diz|faz|traz|dei)$/.test(lowerPrefix)) return true;
+      if (
+        lowerPrefix.length >= 3 &&
+        /(?:[aei]r|pôr|[aeio]u|[aeéê]m|ão|õe|ia|va|ra|sse|ndo|mos|ei|oi|[iaeu]z|nha|trouxe|coube|soube|parece|resta|falta|basta|cabe|serve|pede|custa|importa|pertence|agradece)$/.test(
+          lowerPrefix,
+        )
+      ) {
+        return true;
+      }
+    }
+
+    if (CLITIC_ME_TE_SET.has(lowerSuffix)) {
+      if (NON_CLITIC_OBJ_WORDS.has(combined)) return false;
+      if (lowerPrefix.length >= 2 && /^(?:dá|vê|foi|deu|fez|diz|faz|dei|ver|dar|ter|pôr)$/.test(lowerPrefix)) {
+        return true;
+      }
+      if (
+        lowerPrefix.length >= 3 &&
+        /(?:[aei]r|pôr|[aeio]u|[aeéê]m|ão|õe|ia|va|ra|sse|ndo|mos|ei|[iaeu]z|nha|ói)$/.test(lowerPrefix)
+      ) {
+        return true;
+      }
+    }
+
+    if (CLITIC_NOS_VOS_SET.has(lowerSuffix)) {
+      if (NON_CLITIC_OBJ_WORDS.has(combined)) return false;
+      if (lowerSuffix === 'nos' && lowerPrefix.length >= 4 && /mo$/.test(lowerPrefix)) return true;
+      if (
+        lowerPrefix.length >= 3 &&
+        /(?:[aei]r|pôr|[aeio]u|[aeéê]m|ão|õe|va|sse|ndo|mos|[iaeu]z|nha|dá|vê)$/.test(lowerPrefix)
+      ) {
+        return true;
+      }
     }
   }
 
@@ -896,8 +1280,8 @@ function appendLineSpans(acc: TextSpan[], nextSpans: TextSpan[]): void {
   }
 
   // Caso 2: hífen após letra + próxima linha começando com letra.
-  const prevMatch = prevText.match(/(\p{L}+)[-‐]$/u);
-  const nextMatch = nextText.match(/^(\p{L}+)(.*)$/u);
+  const prevMatch = prevText.match(/([\p{L}\p{M}]+)[-‐]$/u);
+  const nextMatch = nextText.match(/^([\p{L}\p{M}]+)(.*)$/u);
   if (prevMatch && nextMatch) {
     const prefix = prevMatch[1];
     const suffix = nextMatch[1];
@@ -972,12 +1356,18 @@ function sliceSpansPrefix(spans: TextSpan[], prefixLen: number): TextSpan[] {
   return trimSpans(out);
 }
 
-const UNORDERED_LIST_RE = /^([•●▪◦‣⁃■□◆◇▸▹►❖➢➤\-–])\s+(?=\S)/;
+const EXPLICIT_UNORDERED_LIST_RE = /^[•●▪◦‣⁃■□◆◇▸▹►❖➢➤]\s+(?=\S)/;
+const DASH_LIST_RE = /^([-–])\s+(?=\S)/;
+const DIALOGUE_DASH_START_RE = /^[-–—]\s+(?=\S)/;
 const ORDERED_LIST_RE = /^((?:\d{1,3}[.)]|[a-zA-Z]\)))\s+(?=\S)/;
+const TERMINAL_PUNCT_RE = /[.!?…:][”"'’»)\]]*$/;
 
-function detectListMarker(text: string): { ordered: boolean; prefixLen: number } | null {
+const DIALOGUE_SPEECH_VERB_RE =
+  /(?:,|—|–|[?!])\s*(?:disse|perguntou|respondeu|falou|gritou|sussurrou|murmurou|exclamou|retorquiu|replicou|indagou|comentou|observou|explicou|acrescentou|continuou|concluiu|insistiu|pediu|avisou|interrompeu|sorriu|suspirou|riu|pensou|retrucou|ponderou|balbuciou|resmungou|berrou|chamou)\b/iu;
+
+function detectExplicitListMarker(text: string): { ordered: boolean; prefixLen: number } | null {
   const clean = stripSoftHyphens(text);
-  const unord = clean.match(UNORDERED_LIST_RE);
+  const unord = clean.match(EXPLICIT_UNORDERED_LIST_RE);
   if (unord) return { ordered: false, prefixLen: unord[0].length };
 
   const ord = clean.match(ORDERED_LIST_RE);
@@ -990,7 +1380,195 @@ function detectListMarker(text: string): { ordered: boolean; prefixLen: number }
   return null;
 }
 
-const TERMINAL_PUNCT_RE = /[.!?…:][”"'’»)\]]*$/;
+function detectDashMarker(text: string): { char: '-' | '–'; prefixLen: number } | null {
+  const clean = stripSoftHyphens(text);
+  const m = clean.match(DASH_LIST_RE);
+  if (!m) return null;
+  return { char: m[1] as '-' | '–', prefixLen: m[0].length };
+}
+
+function detectListMarker(text: string): { ordered: boolean; prefixLen: number } | null {
+  const explicit = detectExplicitListMarker(text);
+  if (explicit) return explicit;
+  const dash = detectDashMarker(text);
+  if (dash) return { ordered: false, prefixLen: dash.prefixLen };
+  return null;
+}
+
+/**
+ * Decide quais linhas iniciadas por "-" ou "–" são realmente itens de lista (vs. falas de diálogo).
+ * Retorna mapa índice da linha -> comprimento do prefixo de marcador a remover.
+ */
+function classifyDashListLines(
+  lines: LayoutLine[],
+  colBaseMap: Map<number, number>,
+  bodyFontSize: number,
+  normalStep: number,
+  classifyHeading: (line: LayoutLine) => 1 | 2 | 3 | null,
+): Map<number, number> {
+  const listDashPrefixes = new Map<number, number>();
+  if (lines.length === 0) return listDashPrefixes;
+
+  interface DashEntry {
+    startIdx: number;
+    endIdx: number;
+    column: number;
+    x: number;
+    dashChar: '-' | '–';
+    prefixLen: number;
+    hangingIndent: boolean;
+    hasDialogueSignals: boolean;
+    endsWithPeriod: boolean;
+  }
+
+  const lineKind: Array<'heading' | 'explicit' | 'ordered' | 'dash' | 'text'> = new Array(lines.length);
+  const dashMeta = new Map<number, { char: '-' | '–'; prefixLen: number }>();
+
+  for (let i = 0; i < lines.length; i++) {
+    if (classifyHeading(lines[i]) !== null) {
+      lineKind[i] = 'heading';
+      continue;
+    }
+    const explicit = detectExplicitListMarker(lines[i].text);
+    if (explicit) {
+      lineKind[i] = explicit.ordered ? 'ordered' : 'explicit';
+      continue;
+    }
+    const dash = detectDashMarker(lines[i].text);
+    if (dash) {
+      lineKind[i] = 'dash';
+      dashMeta.set(i, dash);
+      continue;
+    }
+    lineKind[i] = 'text';
+  }
+
+  const entries: DashEntry[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lineKind[i] !== 'dash') continue;
+    const meta = dashMeta.get(i)!;
+    const firstLine = lines[i];
+    const colBaseX = colBaseMap.get(firstLine.column) ?? firstLine.colLeft;
+    const colWidth = Math.max(1, firstLine.colRight - colBaseX);
+    let endIdx = i;
+    let hangingIndent = false;
+    let wrapLeft = false;
+    const parts: string[] = [stripSoftHyphens(firstLine.text).slice(meta.prefixLen)];
+
+    // Agrega linhas de continuação imediatas desta entrada na mesma coluna.
+    while (endIdx + 1 < lines.length) {
+      const nextIdx = endIdx + 1;
+      if (lineKind[nextIdx] !== 'text') break;
+      const prevLn = lines[endIdx];
+      const nextLn = lines[nextIdx];
+      if (nextLn.column !== firstLine.column) break;
+      if (DIALOGUE_DASH_START_RE.test(stripSoftHyphens(nextLn.text).trim())) break;
+
+      const vStep = nextLn.yTop - prevLn.yTop;
+      if (vStep > normalStep * 1.32 && vStep > Math.max(prevLn.fontSize, nextLn.fontSize) * 1.5) break;
+
+      const prevClean = stripSoftHyphens(prevLn.text).trim();
+      const prevWidth = prevLn.xEnd - prevLn.x;
+      const prevRightGap = prevLn.colRight - prevLn.xEnd;
+      const prevIsShort =
+        prevRightGap >= Math.max(prevLn.fontSize * 2.5, colWidth * 0.15) || prevWidth < colWidth * 0.82;
+      if (prevIsShort && TERMINAL_PUNCT_RE.test(prevClean)) break;
+
+      if (nextLn.x >= firstLine.x + firstLine.fontSize * 0.4) hangingIndent = true;
+      if (nextLn.x < firstLine.x - 4) wrapLeft = true;
+      parts.push(stripSoftHyphens(nextLn.text).trim());
+      endIdx = nextIdx;
+    }
+
+    const body = parts.join(' ').trim();
+    const hasDialogueSignals =
+      wrapLeft ||
+      /\s[–—]\s/.test(body) ||
+      DIALOGUE_SPEECH_VERB_RE.test(body) ||
+      /[?!…][”"'’»)\]]*$/.test(body);
+    const endsWithPeriod = /\.[”"'’»)\]]*$/.test(body);
+
+    entries.push({
+      startIdx: i,
+      endIdx,
+      column: firstLine.column,
+      x: firstLine.x,
+      dashChar: meta.char,
+      prefixLen: meta.prefixLen,
+      hangingIndent,
+      hasDialogueSignals,
+      endsWithPeriod,
+    });
+  }
+
+  const xTol = Math.max(6, bodyFontSize * 0.6);
+
+  const isAdjacentExplicitBullet = (e: DashEntry): boolean => {
+    const prevIdx = e.startIdx - 1;
+    if (prevIdx >= 0 && lineKind[prevIdx] === 'explicit' && lines[prevIdx].column === e.column) {
+      if (Math.abs(lines[prevIdx].x - e.x) <= xTol) return true;
+    }
+    const nextIdx = e.endIdx + 1;
+    if (nextIdx < lines.length && lineKind[nextIdx] === 'explicit' && lines[nextIdx].column === e.column) {
+      if (Math.abs(lines[nextIdx].x - e.x) <= xTol) return true;
+    }
+    return false;
+  };
+
+  // Avalia grupos contíguos de entradas com o mesmo marcador de traço e alinhamento.
+  let gStart = 0;
+  while (gStart < entries.length) {
+    let gEnd = gStart;
+    while (gEnd + 1 < entries.length) {
+      const curr = entries[gEnd];
+      const next = entries[gEnd + 1];
+      if (
+        next.startIdx === curr.endIdx + 1 &&
+        next.column === curr.column &&
+        next.dashChar === curr.dashChar &&
+        Math.abs(next.x - curr.x) <= xTol
+      ) {
+        gEnd++;
+      } else {
+        break;
+      }
+    }
+
+    const group = entries.slice(gStart, gEnd + 1);
+    const anyDialogue = group.some((e) => e.hasDialogueSignals);
+    const anyHanging = group.some((e) => e.hangingIndent);
+    const anyAdjExplicit = group.some((e) => isAdjacentExplicitBullet(e));
+    const dashChar = group[0].dashChar;
+
+    let isListGroup = false;
+    if (!anyDialogue) {
+      if (anyAdjExplicit || anyHanging) {
+        isListGroup = true;
+      } else if (group.length >= 2) {
+        if (dashChar === '-') {
+          isListGroup = true;
+        } else {
+          // En-dash ("–") em português é travessão de diálogo; só vira lista quando os itens
+          // parecem tópicos curtos sem cara de falas encerradas por ponto.
+          const nonPeriodCount = group.filter((e) => !e.endsWithPeriod).length;
+          if (nonPeriodCount > 0 && nonPeriodCount >= Math.ceil(group.length / 2)) {
+            isListGroup = true;
+          }
+        }
+      }
+    }
+
+    if (isListGroup) {
+      for (const e of group) {
+        listDashPrefixes.set(e.startIdx, e.prefixLen);
+      }
+    }
+
+    gStart = gEnd + 1;
+  }
+
+  return listDashPrefixes;
+}
 
 /** Mapeia tamanhos de fonte de título (>= 1.18x corpo) para níveis 1, 2 ou 3. */
 function buildHeadingLevelMap(allLines: LayoutLine[], bodyFontSize: number): (line: LayoutLine) => 1 | 2 | 3 | null {
@@ -1153,6 +1731,7 @@ function buildBlocks(
     }
 
     const colBaseMap = computeColumnBaseLeft(lines, bodyFontSize);
+    const dashListLines = classifyDashListLines(lines, colBaseMap, bodyFontSize, normalStep, classifyHeading);
 
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];
@@ -1190,8 +1769,11 @@ function buildBlocks(
         continue;
       }
 
-      // 2. Item de lista.
-      const listInfo = detectListMarker(line.text);
+      // 2. Item de lista (marcador explícito/ordenado ou traço confirmado como lista).
+      const explicitList = detectExplicitListMarker(line.text);
+      const dashPrefixLen = explicitList ? undefined : dashListLines.get(li);
+      const listInfo =
+        explicitList ?? (dashPrefixLen !== undefined ? { ordered: false, prefixLen: dashPrefixLen } : null);
       if (listInfo) {
         flushCurrent();
         currentKind = 'li';
@@ -1210,9 +1792,15 @@ function buildBlocks(
         const samePage = prevLine.pageNumber === line.pageNumber;
         const sameColumn = samePage && prevLine.column === line.column;
         const prevClean = stripSoftHyphens(prevLine.text).trim();
+        const currClean = stripSoftHyphens(line.text).trim();
         const prevEndsHyphen =
-          prevLine.text.endsWith('\u00AD') || /\p{L}[-‐]$/u.test(prevClean);
+          prevLine.text.endsWith('\u00AD') || /[\p{L}\p{M}][-‐]$/u.test(prevClean);
         const prevEndsTerminal = TERMINAL_PUNCT_RE.test(prevClean);
+
+        // Falas iniciadas por travessão/hífen abrem parágrafo próprio mantendo o travessão.
+        const startsDialogue =
+          DIALOGUE_DASH_START_RE.test(currClean) &&
+          (prevEndsTerminal || /^[-–—]\s+[\p{Lu}"'«“¿¡…]/u.test(currClean));
 
         const currIndent = line.x - colBaseX;
         const hasFirstLineIndent =
@@ -1228,7 +1816,9 @@ function buildBlocks(
           prevRightMarginGap >= Math.max(prevLine.fontSize * 2.5, prevColWidth * 0.15) ||
           prevWidth < prevColWidth * 0.82;
 
-        if (sameColumn) {
+        if (startsDialogue) {
+          startNewParagraph = true;
+        } else if (sameColumn) {
           const vStep = line.yTop - prevLine.yTop;
           const hasLargeGap = vStep > normalStep * 1.32 && vStep > Math.max(prevLine.fontSize, line.fontSize) * 1.5;
 
@@ -1296,11 +1886,38 @@ function blockCharCount(block: Block): number {
 function normalizeTitleForMatch(title: string): string {
   return normalizePdfText(title)
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
     .trim();
 }
 
+function matchesOutlineParagraph(blkNorm: string, entryNorm: string): boolean {
+  if (!blkNorm || !entryNorm) return false;
+  if (blkNorm === entryNorm) return true;
+  return (
+    blkNorm.startsWith(entryNorm) &&
+    blkNorm[entryNorm.length] === ' ' &&
+    blkNorm.length <= Math.ceil(entryNorm.length * 1.2)
+  );
+}
+
 /** Divide blocos em capítulos usando o sumário do PDF (outline). */
+/** Separa os runs em negrito do início de um parágrafo (título colado ao corpo) do restante do texto. */
+function splitBoldLead(blk: { t: 'p'; text: string; runs?: Run[] }): { title: string; rest: Block } | null {
+  const runs = blk.runs;
+  if (!runs || runs.length < 2 || !runs[0].b) return null;
+  let k = 0;
+  while (k < runs.length && runs[k].b) k++;
+  const title = runs.slice(0, k).map((r) => r.s).join('').trim();
+  const restRuns = runs.slice(k).map((r) => ({ ...r }));
+  if (!title || restRuns.length === 0) return null;
+  restRuns[0].s = restRuns[0].s.replace(/^\s+/, '');
+  const restText = restRuns.map((r) => r.s).join('').trim();
+  if (!restText) return null;
+  // Sem formatação no restante, o bloco fica sem runs (como os demais parágrafos simples).
+  const formatted = restRuns.some((r) => r.b || r.i || r.sup);
+  return { title, rest: formatted ? { t: 'p', text: restText, runs: restRuns } : { t: 'p', text: restText } };
+}
+
 function splitByOutline(blocks: TaggedBlock[], outline: PdfOutlineEntry[]): Chapter[] {
   const valid = outline
     .map((e) => ({
@@ -1323,34 +1940,94 @@ function splitByOutline(blocks: TaggedBlock[], outline: PdfOutlineEntry[]): Chap
 
   chosen.sort((a, b) => a.pageNumber - b.pageNumber);
 
+  interface OutlineCut {
+    idx: number;
+    title: string;
+    entryPage: number;
+    blockPage: number;
+    promotedHeading?: { level: 1 | 2 | 3; text: string; rest?: Block };
+  }
+
   // Resolve o índice exato do bloco onde cada capítulo do sumário começa.
-  const cuts: Array<{ idx: number; title: string }> = [];
+  const cuts: OutlineCut[] = [];
   let minSearchIdx = 0;
 
   for (const entry of chosen) {
     const firstOnOrAfter = blocks.findIndex((b, idx) => idx >= minSearchIdx && b.pageNumber >= entry.pageNumber);
     if (firstOnOrAfter === -1) continue;
 
-    // Tenta casar com um título na página de destino para um corte exato no meio da página.
+    // Tenta casar com um título na página de destino (ou na seguinte) para um corte exato.
     const entryNorm = normalizeTitleForMatch(entry.title);
-    let cutIdx = firstOnOrAfter;
-    for (let i = firstOnOrAfter; i < blocks.length && blocks[i].pageNumber === entry.pageNumber; i++) {
-      const blk = blocks[i].block;
-      if (blk.t === 'h') {
-        const blkNorm = normalizeTitleForMatch(blk.text);
-        if (blkNorm && entryNorm && (blkNorm === entryNorm || blkNorm.includes(entryNorm) || entryNorm.includes(blkNorm))) {
-          cutIdx = i;
-          break;
+    const entryWithoutMarker = entryNorm.replace(/^(?:\d{1,3}|[a-z])\s+/, '');
+    const maxParaLen = Math.max(MAX_HEADING_LENGTH, Math.ceil(entry.title.length * 1.25));
+    const entryHeadingLevel = Math.min(3, Math.max(1, entry.level - minLevel + 1)) as 1 | 2 | 3;
+
+    const findMatchOnPage = (
+      targetPage: number,
+    ): { idx: number; promotedHeading?: { level: 1 | 2 | 3; text: string; rest?: Block } } | null => {
+      if (!entryNorm) return null;
+
+      // 1º: bloco `h` correspondente na página.
+      for (let i = firstOnOrAfter; i < blocks.length && blocks[i].pageNumber <= targetPage; i++) {
+        if (blocks[i].pageNumber !== targetPage) continue;
+        const blk = blocks[i].block;
+        if (blk.t === 'h') {
+          const blkNorm = normalizeTitleForMatch(blk.text);
+          if (blkNorm && (blkNorm === entryNorm || blkNorm.includes(entryNorm) || entryNorm.includes(blkNorm))) {
+            return { idx: i };
+          }
         }
+      }
+
+      // 2º: bloco `p` curto (ou `li` numerado cujo prefixo numérico foi removido) com o título da seção.
+      for (let i = firstOnOrAfter; i < blocks.length && blocks[i].pageNumber <= targetPage; i++) {
+        if (blocks[i].pageNumber !== targetPage) continue;
+        const blk = blocks[i].block;
+        if (blk.t === 'p') {
+          const trimmed = blk.text.trim();
+          if (trimmed.length <= maxParaLen && matchesOutlineParagraph(normalizeTitleForMatch(trimmed), entryNorm)) {
+            return { idx: i, promotedHeading: { level: entryHeadingLevel, text: trimmed } };
+          }
+          // Título em negrito colado ao corpo no mesmo parágrafo: o trecho em negrito inicial vira o título.
+          const lead = splitBoldLead(blk);
+          if (lead && matchesOutlineParagraph(normalizeTitleForMatch(lead.title), entryNorm)) {
+            return { idx: i, promotedHeading: { level: entryHeadingLevel, text: lead.title, rest: lead.rest } };
+          }
+        } else if (blk.t === 'li' && blk.ordered && entryWithoutMarker !== entryNorm && entryWithoutMarker.length >= 3) {
+          const trimmed = blk.text.trim();
+          if (trimmed.length > maxParaLen) continue;
+          const blkNorm = normalizeTitleForMatch(trimmed);
+          if (matchesOutlineParagraph(blkNorm, entryWithoutMarker)) {
+            return { idx: i, promotedHeading: { level: entryHeadingLevel, text: entry.title } };
+          }
+        }
+      }
+
+      return null;
+    };
+
+    const match = findMatchOnPage(entry.pageNumber) ?? findMatchOnPage(entry.pageNumber + 1);
+    const cutIdx = match ? match.idx : firstOnOrAfter;
+    const matchedBlock = match !== null;
+    const promotedHeading = match?.promotedHeading;
+
+    const lastCut = cuts.length > 0 ? cuts[cuts.length - 1] : null;
+    if (lastCut) {
+      if (lastCut.idx === cutIdx) continue;
+      // Duas entradas do sumário na mesma página sem correspondência (`h` ou `p`): ignora a duplicata
+      // para não fatiar após um único bloco nem deslocar o corte para a página seguinte.
+      if (!matchedBlock && (lastCut.entryPage === entry.pageNumber || lastCut.blockPage >= entry.pageNumber)) {
+        continue;
       }
     }
 
-    if (cuts.length > 0 && cuts[cuts.length - 1].idx === cutIdx) {
-      // Dois itens de sumário apontando para exatamente o mesmo ponto: mantém o primeiro ou concatena.
-      continue;
-    }
-
-    cuts.push({ idx: cutIdx, title: entry.title });
+    cuts.push({
+      idx: cutIdx,
+      title: entry.title,
+      entryPage: entry.pageNumber,
+      blockPage: blocks[cutIdx].pageNumber,
+      ...(promotedHeading ? { promotedHeading } : {}),
+    });
     minSearchIdx = cutIdx + 1;
   }
 
@@ -1374,6 +2051,11 @@ function splitByOutline(blocks: TaggedBlock[], outline: PdfOutlineEntry[]): Chap
     const end = i + 1 < cuts.length ? cuts[i + 1].idx : blocks.length;
     const slice = blocks.slice(start, end).map((b) => b.block);
     if (slice.length === 0) continue;
+    const promoted = cuts[i].promotedHeading;
+    if (promoted) {
+      slice[0] = { t: 'h', level: promoted.level, text: promoted.text };
+      if (promoted.rest) slice.splice(1, 0, promoted.rest);
+    }
     chapters.push({ title: cuts[i].title, blocks: slice });
   }
 
@@ -1594,7 +2276,8 @@ function analyzeLayout(pages: PdfPageInput[], options: PdfLayoutOptions): Layout
   const bodyFontSize = weightedMedian(fontWeights, 12);
 
   // 3. Remove cabeçalhos/rodapés repetidos e números de página isolados.
-  const cleanPagesLines = stripHeadersFootersAndPageNumbers(rawPagesLines, bodyFontSize);
+  const preliminaryStep = estimateNormalLineStep(rawPagesLines, bodyFontSize);
+  const cleanPagesLines = stripHeadersFootersAndPageNumbers(rawPagesLines, bodyFontSize, preliminaryStep);
 
   // 4. Calcula espaçamento normal entre linhas do corpo e reconstrói blocos.
   const normalStep = estimateNormalLineStep(cleanPagesLines, bodyFontSize);
