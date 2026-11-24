@@ -1,7 +1,9 @@
 // Importador de PDF para ParsedBook usando pdfjs-dist com Web Worker.
 // Carregado sob demanda via import dinâmico.
-import { getDocument, GlobalWorkerOptions, OPS } from 'pdfjs-dist';
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// Build "legacy": o build padrão do pdf.js 6.5 usa Promise.try (Chrome 128+) e trava sem erro em WebViews
+// Android mais antigos (testado no WebView 124); o legacy traz os polyfills necessários.
+import { getDocument, GlobalWorkerOptions, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { Block, Chapter, ParsedBook, ProgressFn } from '../types';
 import { extractPdfChapters, extractPdfPageBlocks, type PdfPageInput } from './pdf-layout';
 import {
@@ -271,6 +273,9 @@ async function renderPageToJpeg(
  * Converte um PDF (ArrayBuffer) em livro refluível (`ParsedBook`), ou em imagens se for escaneado ou apresentação.
  * Consome o `ArrayBuffer` diretamente (transferido ao Web Worker sem segunda cópia em memória).
  */
+/** Tempo máximo para o pdf.js abrir o documento (xref e estrutura), sem contar a extração das páginas. */
+const PDF_OPEN_TIMEOUT_MS = 60_000;
+
 export async function parsePdf(
   data: ArrayBuffer,
   fileName: string,
@@ -294,9 +299,18 @@ export async function parsePdf(
     canvasMaxAreaInBytes: MAX_CANVAS_AREA * 4,
   });
   let doc: PdfDoc;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    doc = await loadingTask.promise;
+    // Se o motor do pdf.js não iniciar (worker que falha sem rejeitar), a importação não fica presa para sempre.
+    const timeout = new Promise<never>((_, reject) => {
+      openTimer = setTimeout(
+        () => reject(new Error('O PDF não abriu: o leitor de PDF não iniciou neste aparelho.')),
+        PDF_OPEN_TIMEOUT_MS,
+      );
+    });
+    doc = await Promise.race([loadingTask.promise, timeout]);
   } catch (err) {
+    clearTimeout(openTimer);
     try {
       await loadingTask.destroy();
     } catch {
@@ -304,6 +318,7 @@ export async function parsePdf(
     }
     throw friendlyPdfError(err);
   }
+  clearTimeout(openTimer);
 
   try {
     const numPages = doc.numPages;

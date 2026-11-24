@@ -28,9 +28,9 @@ const { getDocumentSpy, defaultGetDocument, opsRef } = vi.hoisted(() => ({
   },
 }));
 
-// O pdf.js "normal" depende de APIs de navegador; nos testes usamos a build legacy, que roda no Node.
-vi.mock('pdfjs-dist', async () => {
-  const actual = await import('pdfjs-dist/legacy/build/pdf.mjs');
+// O app usa a build legacy do pdf.js (WebViews antigos); ela também roda no Node.
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('pdfjs-dist/legacy/build/pdf.mjs')>();
   const realGetDocument = actual.getDocument as unknown as (...args: unknown[]) => unknown;
   defaultGetDocument.fn = realGetDocument;
   opsRef.ops = {
@@ -45,7 +45,7 @@ vi.mock('pdfjs-dist', async () => {
     getDocument: (...args: unknown[]) => getDocumentSpy(...args),
   };
 });
-vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '' }));
+vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '' }));
 
 const noop = () => {};
 
