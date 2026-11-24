@@ -20,6 +20,10 @@ function open(): Promise<IDBDatabase> {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
+    // Uma abertura que falhou não pode ficar em cache: a próxima chamada tenta de novo.
+    dbPromise.catch(() => {
+      dbPromise = null;
+    });
     // Pede armazenamento persistente para o Android não apagar a biblioteca sob pressão de espaço.
     navigator.storage?.persist?.().catch(() => {});
   }
@@ -66,13 +70,24 @@ export async function saveBook(meta: BookMeta, content: BookContent, blobs: Map<
   const db = await open();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(['meta', 'content', 'blobs'], 'readwrite');
-    tx.objectStore('meta').put(meta, meta.id);
-    tx.objectStore('content').put(content, meta.id);
-    const b = tx.objectStore('blobs');
-    for (const [k, v] of blobs) b.put(v, k);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new DOMException('Gravação cancelada.', 'AbortError'));
+    try {
+      tx.objectStore('meta').put(meta, meta.id);
+      tx.objectStore('content').put(content, meta.id);
+      const b = tx.objectStore('blobs');
+      for (const [k, v] of blobs) b.put(v, k);
+    } catch (err) {
+      // Um put pode lançar na hora (ex.: QuotaExceededError). Sem o abort, a transação confirmaria só o que
+      // já foi enfileirado e deixaria um livro pela metade (meta sem conteúdo).
+      try {
+        tx.abort();
+      } catch {
+        // transação já encerrada
+      }
+      reject(err);
+    }
   });
 }
 
@@ -85,6 +100,7 @@ export async function deleteBook(id: string): Promise<void> {
     tx.objectStore('blobs').delete(IDBKeyRange.bound(`${id}/`, `${id}/￿`));
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new DOMException('Exclusão cancelada.', 'AbortError'));
   });
 }
 

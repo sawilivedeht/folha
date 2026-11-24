@@ -20,7 +20,16 @@ function route(): void {
   unmount = null;
   root.replaceChildren();
   const m = location.hash.match(/^#\/ler\/(.+)$/);
-  unmount = m ? mountReader(root, decodeURIComponent(m[1])) : mountLibrary(root);
+  unmount = m ? mountReader(root, safeDecode(m[1])) : mountLibrary(root);
+}
+
+/** Um hash com escape inválido (%E0%A4%A) vira um id que não existe, e o leitor mostra "Livro não encontrado". */
+function safeDecode(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 window.addEventListener('popstate', route);
