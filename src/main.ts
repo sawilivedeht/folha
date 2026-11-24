@@ -26,10 +26,15 @@ function route(): void {
 window.addEventListener('popstate', route);
 
 if (Capacitor.isNativePlatform()) {
+  // No leitor, Voltar desfaz o pushState que abriu o livro (ou cai para a estante se o livro
+  // foi a primeira tela). Na estante, que é a tela raiz, Voltar sai do app no primeiro toque.
   App.addListener('backButton', ({ canGoBack }) => {
-    if (location.hash.startsWith('#/ler/')) navigate('#/', true);
-    else if (canGoBack) history.back();
-    else App.exitApp();
+    if (location.hash.startsWith('#/ler/')) {
+      if (canGoBack) history.back();
+      else navigate('#/', true);
+    } else {
+      App.exitApp();
+    }
   });
 }
 
