@@ -22,7 +22,7 @@ export interface PdfPageInput {
   width: number;
   height: number;
   items: PdfTextItem[];
-  /** Imagem de página inteira para páginas isoladas sem texto (ex.: figura/mapa). */
+  /** Imagem da página inteira: páginas sem texto (figura/mapa) ou de texto com figura grande (vem depois do texto). */
   fallbackImage?: { src: string; w: number; h: number; alt?: string };
 }
 
@@ -1267,6 +1267,22 @@ function buildBlocks(
       prevLine = line;
       prevColBaseX = colBaseX;
     }
+
+    // Página de texto com figura grande: a imagem da página vem depois do texto dela.
+    if (page.fallbackImage) {
+      flushCurrent();
+      prevLine = null;
+      blocks.push({
+        block: {
+          t: 'img',
+          src: page.fallbackImage.src,
+          alt: page.fallbackImage.alt ?? `Página ${page.pageNumber}`,
+          w: page.fallbackImage.w,
+          h: page.fallbackImage.h,
+        },
+        pageNumber: page.pageNumber,
+      });
+    }
   }
 
   flushCurrent();
@@ -1516,15 +1532,13 @@ function enforceChapterCharLimit(chapters: Chapter[], maxChars: number): Chapter
   return out;
 }
 
-/**
- * Converte páginas extraídas de um PDF em capítulos refluíveis (`Chapter[]`).
- */
-export function extractPdfChapters(pages: PdfPageInput[], options: PdfLayoutOptions = {}): Chapter[] {
-  if (pages.length === 0) return [];
+interface LayoutAnalysis {
+  taggedBlocks: ReturnType<typeof buildBlocks>;
+}
 
+/** Passos 1 a 4: linhas, corpo, remoção de cabeçalho/rodapé e blocos etiquetados por página. */
+function analyzeLayout(pages: PdfPageInput[], options: PdfLayoutOptions): LayoutAnalysis {
   const yOrigin = options.yOrigin ?? 'pdf';
-  const maxChapterChars = options.maxChapterChars ?? DEFAULT_MAX_CHAPTER_CHARS;
-  const pagesPerChapter = options.pagesPerChapter ?? DEFAULT_PAGES_PER_CHAPTER;
 
   // 1. Extrai linhas de cada página (com detecção de 2 colunas).
   const rawPagesLines = pages.map((p) => extractPageLines(p, yOrigin));
@@ -1550,7 +1564,41 @@ export function extractPdfChapters(pages: PdfPageInput[], options: PdfLayoutOpti
       if (entry.pageNumber >= 1) outlineBreakPages.add(entry.pageNumber);
     }
   }
-  const taggedBlocks = buildBlocks(pages, cleanPagesLines, bodyFontSize, normalStep, outlineBreakPages);
+  return { taggedBlocks: buildBlocks(pages, cleanPagesLines, bodyFontSize, normalStep, outlineBreakPages) };
+}
+
+/**
+ * Reconstrói os blocos de cada página (mesma limpeza de `extractPdfChapters`), sem dividir em capítulos.
+ * Usado pelo modo "apresentação", em que cada página vira um slide.
+ */
+export function extractPdfPageBlocks(
+  pages: PdfPageInput[],
+  options: PdfLayoutOptions = {},
+): Array<{ pageNumber: number; blocks: Block[] }> {
+  if (pages.length === 0) return [];
+  const { taggedBlocks } = analyzeLayout(pages, options);
+  const byPage = new Map<number, Block[]>();
+  for (const tb of taggedBlocks) {
+    let list = byPage.get(tb.pageNumber);
+    if (!list) {
+      list = [];
+      byPage.set(tb.pageNumber, list);
+    }
+    list.push(tb.block);
+  }
+  return pages.map((p) => ({ pageNumber: p.pageNumber, blocks: byPage.get(p.pageNumber) ?? [] }));
+}
+
+/**
+ * Converte páginas extraídas de um PDF em capítulos refluíveis (`Chapter[]`).
+ */
+export function extractPdfChapters(pages: PdfPageInput[], options: PdfLayoutOptions = {}): Chapter[] {
+  if (pages.length === 0) return [];
+
+  const maxChapterChars = options.maxChapterChars ?? DEFAULT_MAX_CHAPTER_CHARS;
+  const pagesPerChapter = options.pagesPerChapter ?? DEFAULT_PAGES_PER_CHAPTER;
+
+  const { taggedBlocks } = analyzeLayout(pages, options);
   if (taggedBlocks.length === 0) return [];
 
   // 5. Divide em capítulos: prioridade para sumário (outline), depois títulos, depois faixas de páginas.

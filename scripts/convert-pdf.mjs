@@ -6,77 +6,19 @@
 // (No Node 22.18+ / 24+, também funciona sem a flag: `node scripts/convert-pdf.mjs <arquivo.pdf>`)
 
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { extractPdfChapters } from '../src/import/pdf-layout.ts';
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { extractPdfChapters, extractPdfPageBlocks } from '../src/import/pdf-layout.ts';
+import {
+  extractOutline,
+  extractPageText,
+  friendlyPdfError,
+  measurePageImageCoverage,
+  readPdfInfo,
+  titleFromFileName,
+} from '../src/import/pdf-extract.ts';
+import { buildSlideChapters, classifyPdf, SCANNED_CHARS_THRESHOLD } from '../src/import/pdf-slides.ts';
 
-const SCANNED_CHARS_THRESHOLD = 40;
-const SCANNED_RATIO_THRESHOLD = 0.7;
 const PREVIEW_CHARS = 3000;
-
-function titleFromFileName(fileName) {
-  const base = basename(fileName).replace(/\.[^.]+$/, '');
-  const cleaned = base.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
-  return cleaned || 'Sem título';
-}
-
-function resolveFontName(page, fontName, styles) {
-  try {
-    if (page.commonObjs && typeof page.commonObjs.has === 'function' && page.commonObjs.has(fontName)) {
-      const obj = page.commonObjs.get(fontName);
-      if (obj && typeof obj.name === 'string' && obj.name.length > 0) return obj.name;
-    }
-  } catch {
-    // Ignora se a fonte não estiver disponível em commonObjs.
-  }
-  const family = styles?.[fontName]?.fontFamily;
-  return family ? `${fontName} ${family}` : fontName;
-}
-
-async function resolveDestPageNumber(doc, dest) {
-  if (!dest) return null;
-  try {
-    const resolved = typeof dest === 'string' ? await doc.getDestination(dest) : dest;
-    if (!Array.isArray(resolved) || resolved.length === 0) return null;
-    const ref = resolved[0];
-    if (typeof ref === 'number') return ref + 1;
-    if (ref && typeof ref === 'object') {
-      const idx = await doc.getPageIndex(ref);
-      return idx + 1;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-async function extractOutline(doc) {
-  let rawOutline = null;
-  try {
-    rawOutline = await doc.getOutline();
-  } catch {
-    return [];
-  }
-  if (!rawOutline || rawOutline.length === 0) return [];
-
-  const entries = [];
-  const walk = async (nodes, level) => {
-    for (const node of nodes) {
-      const title = typeof node.title === 'string' ? node.title.trim() : '';
-      if (title.length > 0) {
-        const pageNumber = await resolveDestPageNumber(doc, node.dest);
-        if (pageNumber !== null && pageNumber >= 1 && pageNumber <= doc.numPages) {
-          entries.push({ title, pageNumber, level });
-        }
-      }
-      if (Array.isArray(node.items) && node.items.length > 0) {
-        await walk(node.items, level + 1);
-      }
-    }
-  };
-  await walk(rawOutline, 0);
-  return entries;
-}
 
 function formatBlock(block) {
   switch (block.t) {
@@ -116,66 +58,57 @@ async function main() {
     disableFontFace: true,
     verbosity: 0,
   });
-  const doc = await loadingTask.promise;
+  let doc;
+  try {
+    doc = await loadingTask.promise;
+  } catch (err) {
+    throw friendlyPdfError(err);
+  }
 
   try {
     const numPages = doc.numPages;
+    if (numPages < 1) throw new Error('O PDF não tem páginas.');
 
-    let title = '';
-    let author = '';
-    try {
-      const meta = await doc.getMetadata();
-      const info = meta?.info ?? {};
-      if (typeof info.Title === 'string') title = info.Title.trim();
-      if (typeof info.Author === 'string') author = info.Author.trim();
-    } catch {
-      // Sem metadados.
-    }
-    if (!title) title = titleFromFileName(pdfPath);
+    const info = await readPdfInfo(doc);
+    const title = info.title || titleFromFileName(pdfPath);
+    const author = info.author;
 
     const outline = await extractOutline(doc);
     const pages = [];
+    const stats = [];
+    let imagePages = 0;
     let lowTextPages = 0;
 
     for (let i = 1; i <= numPages; i++) {
       const page = await doc.getPage(i);
       try {
-        const viewport = page.getViewport({ scale: 1 });
-        const [va, vb, vc, vd, ve, vf] = viewport.transform;
-        const content = await page.getTextContent();
-        const items = [];
-        let charCount = 0;
-
-        for (const raw of content.items) {
-          if (!('str' in raw) || !raw.str) continue;
-          const [, , tc, td, te, tf] = raw.transform;
-          const x = va * te + vc * tf + ve;
-          const y = vb * te + vd * tf + vf;
-          const m2 = va * tc + vc * td;
-          const m3 = vb * tc + vd * td;
-          const h = Math.hypot(m2, m3) || Math.abs(raw.height) || 12;
-          const w = Math.abs(raw.width);
-
-          charCount += raw.str.replace(/\s+/g, '').length;
-          items.push({
-            str: raw.str,
-            x,
-            y,
-            w,
-            h,
-            fontName: resolveFontName(page, raw.fontName, content.styles),
-          });
-        }
-
+        // A lista de operadores carrega as fontes (nome/negrito/itálico); precisa vir antes do texto.
+        const coverage = await measurePageImageCoverage(page, OPS);
+        const { pageInput, charCount } = await extractPageText(page, i);
         if (charCount < SCANNED_CHARS_THRESHOLD) lowTextPages++;
-        pages.push({ pageNumber: i, width: viewport.width, height: viewport.height, items });
+        if (charCount >= 10 && coverage > 0.4) imagePages++;
+        stats.push({ width: pageInput.width, height: pageInput.height, chars: charCount });
+        pages.push(pageInput);
       } finally {
         page.cleanup();
       }
     }
 
-    const isScanned = numPages > 0 && lowTextPages / numPages > SCANNED_RATIO_THRESHOLD;
-    const chapters = extractPdfChapters(pages, { outline, yOrigin: 'top-down' });
+    const kind = classifyPdf(stats);
+    const isScanned = kind === 'scanned';
+    const slideDeck = kind === 'slides';
+    let chapters;
+    if (slideDeck) {
+      // No navegador cada slide também ganha uma imagem renderizada; aqui só simulamos a chave.
+      const slides = extractPdfPageBlocks(pages, { yOrigin: 'top-down' }).map((p) => ({
+        pageNumber: p.pageNumber,
+        blocks: p.blocks,
+        image: { src: `p${String(p.pageNumber).padStart(4, '0')}`, w: 1280, h: 720 },
+      }));
+      chapters = buildSlideChapters(slides);
+    } else {
+      chapters = extractPdfChapters(pages, { outline, yOrigin: 'top-down' });
+    }
 
     const chapterTotals = chapters.map((ch) => ch.blocks.reduce((sum, b) => sum + blockChars(b), 0));
     const totalChars = chapterTotals.reduce((a, b) => a + b, 0);
@@ -187,6 +120,8 @@ async function main() {
     if (isScanned) {
       console.log(`AVISO: PDF escaneado detectado (${lowTextPages}/${numPages} páginas com < ${SCANNED_CHARS_THRESHOLD} caracteres).`);
     }
+    if (slideDeck) console.log('Modo: apresentação de slides (imagem + texto por slide)');
+    if (imagePages > 0) console.log(`Páginas de texto com figura grande: ${imagePages}`);
     console.log(`Capítulos: ${chapters.length}`);
     console.log(`Total de caracteres: ${totalChars}`);
     console.log('\n--- Lista de capítulos ---');

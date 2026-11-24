@@ -287,7 +287,12 @@ export async function parseEpub(
   options: ParseEpubOptions = {},
 ): Promise<ParsedBook> {
   onProgress(0, 'Descompactando EPUB...');
-  const files = unzipSync(new Uint8Array(data));
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(new Uint8Array(data));
+  } catch {
+    throw new Error('EPUB inválido: o arquivo está corrompido ou incompleto (não foi possível descompactar).');
+  }
   const utf8 = new TextDecoder('utf-8');
 
   const containerBytes = findZipEntry(files, 'META-INF/container.xml');
