@@ -16,6 +16,7 @@ export interface TocPanelCallbacks {
   onSelectBookmark: (bookmark: Bookmark) => void;
   onRemoveBookmark: (bookmark: Bookmark) => void;
   onClose: () => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export interface TocPanelHandle {
@@ -24,6 +25,45 @@ export interface TocPanelHandle {
   updateBookmarks: (bookmarks: readonly Bookmark[], chapterTitles: readonly string[]) => void;
   close: () => void;
   isOpen: () => boolean;
+}
+
+let panelIdSeq = 0;
+
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function getFocusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hidden && !el.closest('[hidden]') && !el.closest('[inert]'),
+  );
+}
+
+function trapFocusKeydown(container: HTMLElement, e: KeyboardEvent): void {
+  if (e.key !== 'Tab') return;
+  const focusables = getFocusableElements(container);
+  if (focusables.length === 0) {
+    e.preventDefault();
+    container.focus();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey) {
+    if (active === first || !container.contains(active)) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !container.contains(active)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function restoreFocusTarget(el: HTMLElement | null): void {
+  if (!el || !el.isConnected) return;
+  if (el.closest('[hidden], [inert]')) return;
+  el.focus();
 }
 
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
@@ -42,12 +82,15 @@ function formatBookmarkDate(at: number): string {
 }
 
 export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
+  const idPrefix = `reader-toc-${++panelIdSeq}`;
+
   const overlay = document.createElement('div');
   overlay.className = 'reader-sheet-overlay';
   overlay.hidden = true;
 
   const drawer = document.createElement('aside');
   drawer.className = 'reader-drawer';
+  drawer.tabIndex = -1;
   drawer.setAttribute('role', 'dialog');
   drawer.setAttribute('aria-modal', 'true');
   drawer.setAttribute('aria-label', 'Sumário e marcadores');
@@ -58,19 +101,24 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
   const tabBar = document.createElement('div');
   tabBar.className = 'reader-tabs';
   tabBar.setAttribute('role', 'tablist');
+  tabBar.setAttribute('aria-label', 'Seções do sumário');
 
   const tocTab = document.createElement('button');
   tocTab.type = 'button';
+  tocTab.id = `${idPrefix}-tab-toc`;
   tocTab.className = 'reader-tab is-active';
   tocTab.setAttribute('role', 'tab');
   tocTab.setAttribute('aria-selected', 'true');
+  tocTab.setAttribute('aria-controls', `${idPrefix}-panel-toc`);
   tocTab.textContent = 'Sumário';
 
   const bmTab = document.createElement('button');
   bmTab.type = 'button';
+  bmTab.id = `${idPrefix}-tab-bookmarks`;
   bmTab.className = 'reader-tab';
   bmTab.setAttribute('role', 'tab');
   bmTab.setAttribute('aria-selected', 'false');
+  bmTab.setAttribute('aria-controls', `${idPrefix}-panel-bookmarks`);
   bmTab.textContent = 'Marcadores';
 
   const closeBtn = document.createElement('button');
@@ -83,12 +131,16 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
   header.append(tabBar, closeBtn);
 
   const tocList = document.createElement('div');
+  tocList.id = `${idPrefix}-panel-toc`;
   tocList.className = 'reader-drawer-body';
   tocList.setAttribute('role', 'tabpanel');
+  tocList.setAttribute('aria-labelledby', tocTab.id);
 
   const bmList = document.createElement('div');
+  bmList.id = `${idPrefix}-panel-bookmarks`;
   bmList.className = 'reader-drawer-body';
   bmList.setAttribute('role', 'tabpanel');
+  bmList.setAttribute('aria-labelledby', bmTab.id);
   bmList.hidden = true;
 
   drawer.append(header, tocList, bmList);
@@ -96,17 +148,22 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
 
   let activeTab: 'toc' | 'bookmarks' = 'toc';
   let openState = false;
+  let previousFocus: HTMLElement | null = null;
 
   function setTab(tab: 'toc' | 'bookmarks'): void {
     activeTab = tab;
     const isToc = tab === 'toc';
     tocTab.classList.toggle('is-active', isToc);
     tocTab.setAttribute('aria-selected', String(isToc));
+    tocTab.tabIndex = isToc ? 0 : -1;
     bmTab.classList.toggle('is-active', !isToc);
     bmTab.setAttribute('aria-selected', String(!isToc));
+    bmTab.tabIndex = isToc ? -1 : 0;
     tocList.hidden = !isToc;
     bmList.hidden = isToc;
   }
+
+  setTab('toc');
 
   function renderChapters(chapterTitles: readonly string[], currentChapter: number): void {
     const frag = document.createDocumentFragment();
@@ -136,6 +193,18 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
   }
 
   function renderBookmarks(bookmarks: readonly Bookmark[], chapterTitles: readonly string[]): void {
+    const activeEl = document.activeElement;
+    let focusRowIndex = -1;
+    let focusWasDelete = false;
+    if (openState && activeTab === 'bookmarks' && activeEl instanceof HTMLElement && bmList.contains(activeEl)) {
+      const rows = Array.from(bmList.querySelectorAll<HTMLElement>('.reader-bm-item'));
+      const row = activeEl.closest<HTMLElement>('.reader-bm-item');
+      if (row) {
+        focusRowIndex = rows.indexOf(row);
+        focusWasDelete = activeEl.classList.contains('reader-bm-del');
+      }
+    }
+
     const frag = document.createDocumentFragment();
     if (bookmarks.length === 0) {
       const empty = document.createElement('p');
@@ -178,10 +247,41 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
       }
     }
     bmList.replaceChildren(frag);
+
+    if (focusRowIndex >= 0) {
+      // Mantém o foco dentro do diálogo após reconstruir a lista (ex.: exclusão de marcador).
+      const newRows = bmList.querySelectorAll<HTMLElement>('.reader-bm-item');
+      if (newRows.length > 0) {
+        const targetRow = newRows[Math.min(focusRowIndex, newRows.length - 1)];
+        const targetBtn =
+          targetRow.querySelector<HTMLElement>(focusWasDelete ? '.reader-bm-del' : '.reader-bm-main') ??
+          targetRow.querySelector<HTMLElement>('button');
+        targetBtn?.focus();
+      } else {
+        bmTab.focus();
+      }
+    }
   }
 
   tocTab.addEventListener('click', () => setTab('toc'));
   bmTab.addEventListener('click', () => setTab('bookmarks'));
+  tabBar.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const nextTab = activeTab === 'toc' ? 'bookmarks' : 'toc';
+      setTab(nextTab);
+      (nextTab === 'toc' ? tocTab : bmTab).focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setTab('toc');
+      tocTab.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setTab('bookmarks');
+      bmTab.focus();
+    }
+  });
+  drawer.addEventListener('keydown', (e) => trapFocusKeydown(drawer, e));
   closeBtn.addEventListener('click', () => cb.onClose());
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) cb.onClose();
@@ -190,10 +290,15 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
   return {
     el: overlay,
     open(chapterTitles, currentChapter, bookmarks) {
+      if (!openState) {
+        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      }
       openState = true;
       renderChapters(chapterTitles, currentChapter);
       renderBookmarks(bookmarks, chapterTitles);
       overlay.hidden = false;
+      cb.onOpenChange?.(true);
+      (activeTab === 'toc' ? tocTab : bmTab).focus();
       requestAnimationFrame(() => {
         if (!openState) return;
         overlay.classList.add('is-open');
@@ -213,6 +318,11 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
       openState = false;
       overlay.classList.remove('is-open');
       overlay.hidden = true;
+      // Libera o fundo antes de devolver o foco ao gatilho original.
+      cb.onOpenChange?.(false);
+      const target = previousFocus;
+      previousFocus = null;
+      restoreFocusTarget(target);
     },
     isOpen: () => openState,
   };
@@ -221,6 +331,7 @@ export function createTocPanel(cb: TocPanelCallbacks): TocPanelHandle {
 export interface SettingsPanelCallbacks {
   onChange: (patch: Partial<ReaderSettings>) => void;
   onClose: () => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export interface SettingsPanelHandle {
@@ -245,12 +356,15 @@ const THEME_OPTIONS: readonly { value: Theme; label: string }[] = [
 ];
 
 export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHandle {
+  const idPrefix = `reader-aa-${++panelIdSeq}`;
+
   const overlay = document.createElement('div');
   overlay.className = 'reader-sheet-overlay reader-sheet-overlay--bottom';
   overlay.hidden = true;
 
   const sheet = document.createElement('section');
   sheet.className = 'reader-aa-sheet';
+  sheet.tabIndex = -1;
   sheet.setAttribute('role', 'dialog');
   sheet.setAttribute('aria-modal', 'true');
   sheet.setAttribute('aria-label', 'Configurações de leitura');
@@ -273,6 +387,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
 
   let current: ReaderSettings | null = null;
   let openState = false;
+  let previousFocus: HTMLElement | null = null;
 
   // --- Tamanho da fonte ---
   const fontSizeMinus = document.createElement('button');
@@ -352,6 +467,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   });
 
   function makeStepperRow(
+    idSuffix: string,
     labelText: string,
     minus: HTMLButtonElement,
     val: HTMLSpanElement,
@@ -361,9 +477,14 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
     row.className = 'reader-aa-row';
     const label = document.createElement('span');
     label.className = 'reader-aa-label';
+    label.id = `${idPrefix}-${idSuffix}-label`;
     label.textContent = labelText;
+    val.setAttribute('aria-live', 'polite');
+    val.setAttribute('aria-atomic', 'true');
     const group = document.createElement('div');
     group.className = 'reader-stepper';
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-labelledby', label.id);
     group.append(minus, val, plus);
     row.append(label, group);
     return row;
@@ -374,9 +495,12 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   fontRow.className = 'reader-aa-block';
   const fontLabel = document.createElement('span');
   fontLabel.className = 'reader-aa-label';
+  fontLabel.id = `${idPrefix}-font-label`;
   fontLabel.textContent = 'Fonte';
   const fontGroup = document.createElement('div');
   fontGroup.className = 'reader-seg-group';
+  fontGroup.setAttribute('role', 'group');
+  fontGroup.setAttribute('aria-labelledby', fontLabel.id);
   const fontBtns = new Map<FontFamily, HTMLButtonElement>();
   for (const opt of FONT_OPTIONS) {
     const btn = document.createElement('button');
@@ -418,9 +542,12 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   themeRow.className = 'reader-aa-block';
   const themeLabel = document.createElement('span');
   themeLabel.className = 'reader-aa-label';
+  themeLabel.id = `${idPrefix}-theme-label`;
   themeLabel.textContent = 'Tema';
   const themeGroup = document.createElement('div');
   themeGroup.className = 'reader-theme-group';
+  themeGroup.setAttribute('role', 'group');
+  themeGroup.setAttribute('aria-labelledby', themeLabel.id);
   const themeBtns = new Map<Theme, HTMLButtonElement>();
   for (const opt of THEME_OPTIONS) {
     const btn = document.createElement('button');
@@ -434,9 +561,9 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   themeRow.append(themeLabel, themeGroup);
 
   body.append(
-    makeStepperRow('Tamanho', fontSizeMinus, fontSizeVal, fontSizePlus),
-    makeStepperRow('Entrelinha', lhMinus, lhVal, lhPlus),
-    makeStepperRow('Margem', marginMinus, marginVal, marginPlus),
+    makeStepperRow('size', 'Tamanho', fontSizeMinus, fontSizeVal, fontSizePlus),
+    makeStepperRow('lh', 'Entrelinha', lhMinus, lhVal, lhPlus),
+    makeStepperRow('margin', 'Margem', marginMinus, marginVal, marginPlus),
     fontRow,
     togglesRow,
     themeRow,
@@ -445,6 +572,7 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   sheet.append(header, body);
   overlay.appendChild(sheet);
 
+  sheet.addEventListener('keydown', (e) => trapFocusKeydown(sheet, e));
   closeBtn.addEventListener('click', () => cb.onClose());
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) cb.onClose();
@@ -453,16 +581,28 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   function sync(settings: ReaderSettings): void {
     current = settings;
     fontSizeVal.textContent = `${settings.fontSize} px`;
-    fontSizeMinus.disabled = settings.fontSize <= MIN_FONT_SIZE;
-    fontSizePlus.disabled = settings.fontSize >= MAX_FONT_SIZE;
+    const fsMinDisabled = settings.fontSize <= MIN_FONT_SIZE;
+    const fsMaxDisabled = settings.fontSize >= MAX_FONT_SIZE;
+    if (fsMinDisabled && document.activeElement === fontSizeMinus) fontSizePlus.focus();
+    else if (fsMaxDisabled && document.activeElement === fontSizePlus) fontSizeMinus.focus();
+    fontSizeMinus.disabled = fsMinDisabled;
+    fontSizePlus.disabled = fsMaxDisabled;
 
     lhVal.textContent = settings.lineHeight.toFixed(2).replace('.', ',');
-    lhMinus.disabled = settings.lineHeight <= MIN_LINE_HEIGHT;
-    lhPlus.disabled = settings.lineHeight >= MAX_LINE_HEIGHT;
+    const lhMinDisabled = settings.lineHeight <= MIN_LINE_HEIGHT;
+    const lhMaxDisabled = settings.lineHeight >= MAX_LINE_HEIGHT;
+    if (lhMinDisabled && document.activeElement === lhMinus) lhPlus.focus();
+    else if (lhMaxDisabled && document.activeElement === lhPlus) lhMinus.focus();
+    lhMinus.disabled = lhMinDisabled;
+    lhPlus.disabled = lhMaxDisabled;
 
     marginVal.textContent = `${settings.margin} px`;
-    marginMinus.disabled = settings.margin <= MIN_MARGIN;
-    marginPlus.disabled = settings.margin >= MAX_MARGIN;
+    const marginMinDisabled = settings.margin <= MIN_MARGIN;
+    const marginMaxDisabled = settings.margin >= MAX_MARGIN;
+    if (marginMinDisabled && document.activeElement === marginMinus) marginPlus.focus();
+    else if (marginMaxDisabled && document.activeElement === marginPlus) marginMinus.focus();
+    marginMinus.disabled = marginMinDisabled;
+    marginPlus.disabled = marginMaxDisabled;
 
     for (const [k, btn] of fontBtns) {
       const active = k === settings.font;
@@ -485,9 +625,15 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
   return {
     el: overlay,
     open(settings) {
+      if (!openState) {
+        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      }
       openState = true;
       sync(settings);
       overlay.hidden = false;
+      cb.onOpenChange?.(true);
+      const first = getFocusableElements(sheet)[0];
+      (first ?? sheet).focus();
       requestAnimationFrame(() => {
         if (!openState) return;
         overlay.classList.add('is-open');
@@ -499,6 +645,10 @@ export function createSettingsPanel(cb: SettingsPanelCallbacks): SettingsPanelHa
       openState = false;
       overlay.classList.remove('is-open');
       overlay.hidden = true;
+      cb.onOpenChange?.(false);
+      const target = previousFocus;
+      previousFocus = null;
+      restoreFocusTarget(target);
     },
     isOpen: () => openState,
   };

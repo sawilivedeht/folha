@@ -113,7 +113,12 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
   let viewportEl: HTMLDivElement | null = null;
   let columnsEl: HTMLDivElement | null = null;
   let progressLineFillEl: HTMLDivElement | null = null;
+  let topbarEl: HTMLElement | null = null;
+  let bottombarEl: HTMLElement | null = null;
+  let hudRevealBtnEl: HTMLButtonElement | null = null;
+  let backBtnEl: HTMLButtonElement | null = null;
   let bookmarkBtn: HTMLButtonElement | null = null;
+  let lastBookmarkMarked: boolean | null = null;
   let sliderEl: HTMLInputElement | null = null;
   let statusPageEl: HTMLSpanElement | null = null;
   let statusTimeEl: HTMLSpanElement | null = null;
@@ -275,7 +280,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
   }
 
   function findBookmarkOnCurrentPage(): number {
-    if (!meta) return -1;
+    if (!meta || meta.bookmarks.length === 0) return -1;
     const bookmarks = meta.bookmarks;
 
     for (let i = 0; i < bookmarks.length; i++) {
@@ -283,19 +288,16 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       if (b.chapter === currentChapter && b.block === currentBlock) return i;
     }
 
-    if (!renderedChapter || !columnsEl) return -1;
+    if (!renderedChapter) return -1;
     const els = renderedChapter.blockEls;
-    const columnsLeft = columnsEl.getBoundingClientRect().left;
 
     for (let i = 0; i < bookmarks.length; i++) {
       const b = bookmarks[i];
       if (b.chapter !== currentChapter) continue;
       const el = els[b.block];
       if (!el) continue;
-      const startPage = calcBlockPage(el.offsetLeft, step, totalPages);
-      const rect = el.getBoundingClientRect();
-      const endPage = calcBlockPage(Math.max(0, rect.right - columnsLeft - 1), step, totalPages);
-      if (startPage === currentPage && endPage === currentPage) return i;
+      // Usa só a página de início do bloco: evita getBoundingClientRect() (reflow) e reconhece blocos divididos.
+      if (calcBlockPage(el.offsetLeft, step, totalPages) === currentPage) return i;
     }
 
     return -1;
@@ -304,6 +306,8 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
   function updateBookmarkButton(): void {
     if (!bookmarkBtn) return;
     const marked = findBookmarkOnCurrentPage() >= 0;
+    if (marked === lastBookmarkMarked) return;
+    lastBookmarkMarked = marked;
     bookmarkBtn.classList.toggle('is-active', marked);
     bookmarkBtn.setAttribute('aria-pressed', String(marked));
     bookmarkBtn.setAttribute('aria-label', marked ? 'Remover marcador desta página' : 'Marcar esta página');
@@ -332,6 +336,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     }
     if (sliderEl && !isScrubbing) {
       sliderEl.value = String(Math.round(percent * 10));
+      sliderEl.setAttribute('aria-valuetext', `${getChapterTitle(currentChapter)}, ${percent}%`);
     }
 
     updateBookmarkButton();
@@ -363,18 +368,41 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     if (disposed || imageRaf !== null) return;
     imageRaf = requestAnimationFrame(() => {
       imageRaf = null;
-      if (disposed || !columnsEl) return;
+      if (disposed || !columnsEl || !meta) return;
       const prevTotal = totalPages;
+      const prevPage = currentPage;
+      const prevBlock = currentBlock;
       measureTotalPages();
       if (anchorMode === 'end') {
         currentPage = Math.max(0, totalPages - 1);
         applyTransform(currentPage, false);
         currentBlock = findFirstVisibleBlock();
-        updateHud(false);
-      } else if (totalPages !== prevTotal) {
-        currentPage = pageOfBlock(currentBlock);
-        applyTransform(currentPage, false);
-        updateHud(false);
+        const changed =
+          totalPages !== prevTotal ||
+          currentPage !== prevPage ||
+          currentBlock !== prevBlock ||
+          meta.position.chapter !== currentChapter ||
+          meta.position.block !== currentBlock;
+        updateHud(changed);
+      } else {
+        // Uma imagem pode empurrar currentBlock para outra página sem alterar totalPages.
+        const nextPage = pageOfBlock(currentBlock);
+        if (nextPage !== currentPage || totalPages !== prevTotal) {
+          currentPage = nextPage;
+          applyTransform(currentPage, false);
+          const nextPercent = calcBookPercent(
+            currentChapter,
+            currentPage,
+            totalPages,
+            getChapterChars(),
+            meta.totalChars,
+          );
+          const shouldPersist =
+            nextPercent !== meta.percent ||
+            meta.position.chapter !== currentChapter ||
+            meta.position.block !== currentBlock;
+          updateHud(shouldPersist);
+        }
       }
     });
   }
@@ -471,13 +499,17 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     const anchorBlock = currentBlock;
     applySettingsToDom();
     measureTotalPages();
+    let persist = false;
     if (anchorMode === 'end') {
       currentPage = Math.max(0, totalPages - 1);
+      // Recalcula o bloco da nova última página para manter marcadores e posição sincronizados.
+      currentBlock = findFirstVisibleBlock();
+      persist = currentBlock !== anchorBlock;
     } else {
       currentPage = pageOfBlock(anchorBlock);
     }
     applyTransform(currentPage, false);
-    updateHud(false);
+    updateHud(persist);
   }
 
   function nextPage(animate: boolean): void {
@@ -502,9 +534,41 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     }
   }
 
+  function syncInteractivity(): void {
+    const modalOpen = Boolean(tocPanel?.isOpen() || settingsPanel?.isOpen());
+    if (viewportEl) {
+      viewportEl.inert = modalOpen;
+      if (modalOpen) viewportEl.setAttribute('aria-hidden', 'true');
+      else viewportEl.removeAttribute('aria-hidden');
+    }
+    if (hudRevealBtnEl) {
+      hudRevealBtnEl.hidden = hudOpen;
+      hudRevealBtnEl.inert = modalOpen || hudOpen;
+    }
+    const hudInert = modalOpen || !hudOpen;
+    if (topbarEl) {
+      topbarEl.inert = hudInert;
+      topbarEl.setAttribute('aria-hidden', String(hudInert));
+    }
+    if (bottombarEl) {
+      bottombarEl.inert = hudInert;
+      bottombarEl.setAttribute('aria-hidden', String(hudInert));
+    }
+  }
+
   function setHudOpen(open: boolean): void {
     hudOpen = open;
     readerEl.classList.toggle('is-hud-open', hudOpen);
+    if (!hudOpen) {
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLElement &&
+        ((topbarEl && topbarEl.contains(active)) || (bottombarEl && bottombarEl.contains(active)))
+      ) {
+        active.blur();
+      }
+    }
+    syncInteractivity();
   }
 
   function toggleHud(): void {
@@ -595,9 +659,21 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     progressLineFillEl = progressFill;
     progressLine.appendChild(progressFill);
 
+    // Botão acessível para revelar o HUD pelo teclado/leitor de tela quando fechado
+    const hudRevealBtn = document.createElement('button');
+    hudRevealBtn.type = 'button';
+    hudRevealBtn.className = 'reader-hud-reveal';
+    hudRevealBtn.textContent = 'Mostrar controles';
+    hudRevealBtn.addEventListener('click', () => {
+      setHudOpen(true);
+      backBtnEl?.focus();
+    });
+    hudRevealBtnEl = hudRevealBtn;
+
     // Barra superior
     const topbar = document.createElement('header');
     topbar.className = 'reader-topbar';
+    topbarEl = topbar;
     const topbarInner = document.createElement('div');
     topbarInner.className = 'reader-topbar-inner';
 
@@ -610,6 +686,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       flushSave();
       goBackToLibrary();
     });
+    backBtnEl = backBtn;
 
     const titleEl = document.createElement('h1');
     titleEl.className = 'reader-book-title';
@@ -632,6 +709,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     bmBtn.appendChild(createIcon('bookmark'));
     bmBtn.addEventListener('click', toggleBookmark);
     bookmarkBtn = bmBtn;
+    lastBookmarkMarked = null;
 
     const aaBtn = document.createElement('button');
     aaBtn.type = 'button';
@@ -649,6 +727,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     // Barra inferior
     const bottombar = document.createElement('footer');
     bottombar.className = 'reader-bottombar';
+    bottombarEl = bottombar;
 
     const preview = document.createElement('div');
     preview.className = 'reader-scrub-preview';
@@ -665,14 +744,48 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     slider.value = '0';
     slider.className = 'reader-slider';
     slider.setAttribute('aria-label', 'Progresso do livro');
+    slider.setAttribute('aria-valuetext', '0%');
     sliderEl = slider;
+
+    let sliderPointerActive = false;
+    slider.addEventListener('pointerdown', () => {
+      sliderPointerActive = true;
+    });
+    // O percentual do livro é inteiro: o passo nativo do teclado (0,1%) cairia na mesma página e o slider
+    // voltaria ao valor anterior. No teclado, setas andam 1%, PageUp/PageDown 10%, Home/End vão às pontas.
+    const KEY_STEPS: Record<string, number> = {
+      ArrowRight: 10,
+      ArrowUp: 10,
+      ArrowLeft: -10,
+      ArrowDown: -10,
+      PageUp: 100,
+      PageDown: -100,
+    };
+    slider.addEventListener('keydown', (e) => {
+      sliderPointerActive = false;
+      const current = Number(slider.value);
+      let next: number;
+      if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = 1000;
+      else if (e.key in KEY_STEPS) next = current + KEY_STEPS[e.key];
+      else return;
+      e.preventDefault();
+      next = Math.min(1000, Math.max(0, next));
+      if (next === current) return;
+      slider.value = String(next);
+      slider.dispatchEvent(new Event('input'));
+      slider.dispatchEvent(new Event('change'));
+    });
 
     slider.addEventListener('input', () => {
       if (!meta) return;
       isScrubbing = true;
       const pct = Number(slider.value) / 10;
       const target = percentToTarget(pct, getChapterChars(), meta.totalChars);
-      preview.textContent = `${getChapterTitle(target.chapter)} · ${Math.round(pct)}%`;
+      const roundedPct = Math.round(pct);
+      const chTitle = getChapterTitle(target.chapter);
+      slider.setAttribute('aria-valuetext', `${chTitle}, ${roundedPct}%`);
+      preview.textContent = `${chTitle} · ${roundedPct}%`;
       preview.hidden = false;
     });
 
@@ -683,8 +796,11 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       const pct = Number(slider.value) / 10;
       const target = percentToTarget(pct, getChapterChars(), meta.totalChars);
       loadChapter(target.chapter, { mode: 'fraction', fraction: target.fraction });
-      // Devolve o foco à leitura: com o controle focado, o teclado deixaria de virar páginas.
-      slider.blur();
+      // Só remove o foco após arrasto/clique por ponteiro; no teclado mantém foco para continuar ajustando.
+      if (sliderPointerActive) {
+        sliderPointerActive = false;
+        slider.blur();
+      }
     });
 
     const endScrubPreview = (): void => {
@@ -693,8 +809,14 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       preview.hidden = true;
     };
     slider.addEventListener('pointerup', endScrubPreview);
-    slider.addEventListener('pointercancel', endScrubPreview);
-    slider.addEventListener('blur', endScrubPreview);
+    slider.addEventListener('pointercancel', () => {
+      sliderPointerActive = false;
+      endScrubPreview();
+    });
+    slider.addEventListener('blur', () => {
+      sliderPointerActive = false;
+      endScrubPreview();
+    });
 
     sliderWrap.appendChild(slider);
 
@@ -713,13 +835,13 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
     // Painel de sumário e marcadores
     tocPanel = createTocPanel({
       onSelectChapter(chIdx) {
-        tocPanel?.close();
         setHudOpen(false);
+        tocPanel?.close();
         loadChapter(chIdx, { mode: 'start' });
       },
       onSelectBookmark(bm) {
-        tocPanel?.close();
         setHudOpen(false);
+        tocPanel?.close();
         loadChapter(bm.chapter, { mode: 'block', block: bm.block });
       },
       onRemoveBookmark(bm) {
@@ -738,6 +860,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       onClose() {
         tocPanel?.close();
       },
+      onOpenChange: syncInteractivity,
     });
 
     // Painel "Aa"
@@ -746,16 +869,19 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       onClose() {
         settingsPanel?.close();
       },
+      onOpenChange: syncInteractivity,
     });
 
     readerEl.replaceChildren(
       viewport,
       progressLine,
+      hudRevealBtn,
       topbar,
       bottombar,
       tocPanel.el,
       settingsPanel.el,
     );
+    setHudOpen(false);
 
     // Navegação por toque e deslize horizontal (Pointer Events)
     let activePointerId: number | null = null;
@@ -784,8 +910,27 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       }
     };
 
+    const onPointerCancel = (e: PointerEvent): void => {
+      if (e.pointerId !== activePointerId) return;
+      activePointerId = null;
+      try {
+        viewport.releasePointerCapture(e.pointerId);
+      } catch {
+        // Ignora caso a captura já tenha sido liberada
+      }
+      if (gesture === 'horizontal') {
+        gesture = 'pending';
+        applyTransform(currentPage, true);
+      }
+    };
+
     const onPointerMove = (e: PointerEvent): void => {
       if (e.pointerId !== activePointerId || !columnsEl) return;
+      // Com mouse, perder o botão sem pointerup não deve deixar a página travada no arrasto.
+      if (e.pointerType === 'mouse' && e.buttons === 0) {
+        onPointerCancel(e);
+        return;
+      }
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
 
@@ -813,12 +958,13 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
 
     const onPointerUp = (e: PointerEvent): void => {
       if (e.pointerId !== activePointerId) return;
+      // Limpa activePointerId antes de soltar a captura para lostpointercapture não cancelar o gesto concluído.
+      activePointerId = null;
       try {
         viewport.releasePointerCapture(e.pointerId);
       } catch {
         // Ignora
       }
-      activePointerId = null;
 
       if (gesture === 'horizontal') {
         if (lastDx <= -SWIPE_THRESHOLD) {
@@ -848,23 +994,17 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
       }
     };
 
-    const onPointerCancel = (e: PointerEvent): void => {
-      if (e.pointerId !== activePointerId) return;
-      activePointerId = null;
-      if (gesture === 'horizontal') {
-        applyTransform(currentPage, true);
-      }
-    };
-
     viewport.addEventListener('pointerdown', onPointerDown);
     viewport.addEventListener('pointermove', onPointerMove);
     viewport.addEventListener('pointerup', onPointerUp);
     viewport.addEventListener('pointercancel', onPointerCancel);
+    viewport.addEventListener('lostpointercapture', onPointerCancel);
     cleanups.push(() => {
       viewport.removeEventListener('pointerdown', onPointerDown);
       viewport.removeEventListener('pointermove', onPointerMove);
       viewport.removeEventListener('pointerup', onPointerUp);
       viewport.removeEventListener('pointercancel', onPointerCancel);
+      viewport.removeEventListener('lostpointercapture', onPointerCancel);
     });
 
     // Atalhos de teclado
@@ -899,6 +1039,22 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
         return;
       }
 
+      const isInteractiveTarget =
+        target instanceof Element &&
+        Boolean(target.closest('button, a, [role="button"], [role="tab"]'));
+
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleHud();
+        return;
+      }
+
+      if (e.key === 'Enter' && !isInteractiveTarget) {
+        e.preventDefault();
+        toggleHud();
+        return;
+      }
+
       if (e.key === 'ArrowRight' || e.key === 'PageDown') {
         e.preventDefault();
         if (hudOpen) setHudOpen(false);
@@ -908,6 +1064,7 @@ export function mountReader(root: HTMLElement, bookId: string): () => void {
         if (hudOpen) setHudOpen(false);
         prevPage(true);
       } else if (e.key === ' ') {
+        if (isInteractiveTarget) return;
         e.preventDefault();
         if (hudOpen) setHudOpen(false);
         if (e.shiftKey) prevPage(true);

@@ -100,6 +100,13 @@
   font-size: 1.1em;
 }
 
+/* Quebras de linha vindas de <br> (poemas, endereços) chegam como \n no texto e precisam aparecer. */
+.reader-p,
+.reader-quote,
+.reader-li {
+  white-space: pre-line;
+}
+
 .reader-p {
   margin: 0 0 0.75em;
   orphans: 2;
@@ -302,6 +309,40 @@
   transition: width 130ms ease;
 }
 
+/* Botão acessível para revelar o HUD pelo teclado/leitor de tela quando as barras estão fechadas */
+.reader-hud-reveal {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.reader-hud-reveal[hidden] {
+  display: none;
+}
+
+.reader-hud-reveal:not(:focus):not(:focus-visible) {
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Barras superior e inferior (HUD) */
 .reader-topbar,
 .reader-bottombar {
@@ -314,7 +355,8 @@
   z-index: 20;
   opacity: 0;
   pointer-events: none;
-  transition: transform 140ms ease, opacity 140ms ease;
+  visibility: hidden;
+  transition: transform 140ms ease, opacity 140ms ease, visibility 0s linear 140ms;
 }
 
 .reader-topbar {
@@ -359,7 +401,16 @@
 .reader.is-hud-open .reader-bottombar {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
   transform: translateY(0);
+  transition: transform 140ms ease, opacity 140ms ease, visibility 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-topbar,
+  .reader-bottombar {
+    transition: none;
+  }
 }
 
 .reader-icon-btn {

@@ -137,6 +137,11 @@ export function renderChapterBlocks(
       if (block.w && block.h && block.w > 0 && block.h > 0) {
         img.width = block.w;
         img.height = block.h;
+        if (!fixedLayout) {
+          // Reserva espaço proporcional antes do carregamento assíncrono, mesmo com width/height: auto no CSS.
+          img.style.aspectRatio = `${block.w} / ${block.h}`;
+          img.style.width = `min(${block.w}px, 100%, calc(var(--col-h) * ${block.w / block.h}))`;
+        }
       }
 
       figure.appendChild(img);
@@ -191,6 +196,8 @@ async function loadBlockImage(
       () => {
         if (isDisposed()) return;
         img.style.visibility = '';
+        img.style.width = '';
+        img.style.aspectRatio = '';
         onImageLoad();
       },
       { once: true },

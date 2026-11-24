@@ -9,6 +9,8 @@ export const MIN_LINE_HEIGHT = 1.2;
 export const MAX_LINE_HEIGHT = 2.0;
 export const MIN_MARGIN = 8;
 export const MAX_MARGIN = 48;
+// Absorve arredondamentos subpixel na fronteira entre colunas (offsetLeft = k * step - 1).
+const BLOCK_PAGE_TOLERANCE_PX = 2;
 
 export function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
@@ -34,7 +36,8 @@ export function calcTotalPages(scrollWidth: number, pageWidth: number, gap: numb
 /** Mapeia o offsetLeft de um bloco para o índice da página (0-based). */
 export function calcBlockPage(offsetLeft: number, step: number, totalPages: number): number {
   if (step <= 0 || totalPages <= 1) return 0;
-  const page = Math.floor(Math.max(0, offsetLeft) / step);
+  const tolerance = Math.min(BLOCK_PAGE_TOLERANCE_PX, step * 0.25);
+  const page = Math.floor((Math.max(0, offsetLeft) + tolerance) / step);
   return clamp(page, 0, Math.max(1, Math.floor(totalPages)) - 1);
 }
 

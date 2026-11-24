@@ -42,6 +42,13 @@ describe('calcBlockPage', () => {
     expect(calcBlockPage(1800, 360, 5)).toBe(4);
     expect(calcBlockPage(-10, 360, 5)).toBe(0);
   });
+
+  it('tolera arredondamento subpixel negativo na fronteira entre colunas', () => {
+    expect(calcBlockPage(359, 360, 5)).toBe(1);
+    expect(calcBlockPage(358, 360, 5)).toBe(1);
+    expect(calcBlockPage(719, 360, 5)).toBe(2);
+    expect(calcBlockPage(300, 360, 5)).toBe(0);
+  });
 });
 
 describe('calcBookPercent', () => {
